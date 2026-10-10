@@ -271,6 +271,38 @@ struct WalletABACorrelation {
     var repeatedInTarget: Set<String> { phaseIDs[0].intersection(phaseIDs[2]) }
     var targetOnlyCoincidences: Set<String> { repeatedInTarget.subtracting(phaseIDs[1]) }
 
+    // These are observed event patterns, NOT verified bank-card identities.
+    // Return nothing before completion or for IDs absent from all windows.
+    enum Pattern: Equatable {
+        case repeatedTargetOnly
+        case expressWindowOnly
+        case ambiguous
+    }
+
+    func pattern(for id: String) -> Pattern? {
+        guard step == .finished else { return nil }
+        let inA1 = phaseIDs[0].contains(id)
+        let inB = phaseIDs[1].contains(id)
+        let inA2 = phaseIDs[2].contains(id)
+        if inA1 && inA2 && !inB { return .repeatedTargetOnly }
+        if inB && !inA1 && !inA2 { return .expressWindowOnly }
+        if inA1 || inB || inA2 { return .ambiguous }
+        return nil
+    }
+
+    func unverifiedHint(for id: String) -> String? {
+        switch pattern(for: id) {
+        case .repeatedTargetOnly:
+            return "Possible target A: seen in A1 and A2, not B · UNVERIFIED"
+        case .expressWindowOnly:
+            return "B-window only: could be Express or background · UNVERIFIED"
+        case .ambiguous:
+            return "Mixed/background event pattern · UNVERIFIED"
+        case nil:
+            return nil
+        }
+    }
+
     var summary: String {
         let counts = phaseIDs.map { String($0.count) }
         return "Distinct structured IDs A1/B/A2: \(counts.joined(separator: "/")) · A repeat: \(repeatedInTarget.count) · A repeat absent in B: \(targetOnlyCoincidences.count) · Global events: \(expressGlobalEvents) · Dashboard events: \(dashboardEvents). Unverified correlations only."
