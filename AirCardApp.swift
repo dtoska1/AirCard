@@ -2769,6 +2769,7 @@ struct ContentView: View {
             }
             .buttonStyle(.bordered)
             .controlSize(.regular)
+            .disabled(vm.correlation.step != .idle)
             
             if !vm.cards.isEmpty {
                 Button(action: openBulkImagePicker) {
@@ -2812,6 +2813,7 @@ struct ContentView: View {
                     .buttonStyle(.link)
                     .font(.caption)
                     .foregroundColor(.red)
+                    .disabled(vm.correlation.step != .idle)
                 }
             }
         }
