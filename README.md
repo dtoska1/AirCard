@@ -32,7 +32,7 @@
 - ⚡ **Per-Card & Bulk Customization:** Set unique artwork for each card or apply one design across all cards with a single click.
 - 📱 **Zero-Hassle Card Detection:** Tap any card in your iPhone's Wallet app to detect its hash in real-time.
 - 🚀 **100% Standalone (Universal):** Native support for both **Apple Silicon** and **Intel (x86)** Macs. All required device-communication utilities and image engines are pre-bundled inside the app.
-- 📦 **Zero Prerequisites:** No Homebrew, Python packages, or terminal setup required for macOS users.
+- 📦 **Runtime Requirements:** Uses an installed Python 3 runtime and Apple device frameworks. Python is not bundled; macOS may require Developer Tools. No third-party Python packages are required for the core GUI workflow.
 
 ---
 
@@ -183,3 +183,6 @@ If you find AirCard useful, you can support future development:
 - **TON**: `UQBm9KPhtMw-XVVjirUoa09wzrlyWsbeZhKfefl1Uw-qNZ-r`
 - **USDT (TRC20)**: `TDkDMCyjYxgvkWUnQiF5Erk2RyPQMT6G1n`
 - **USDT / BNB (BEP20)**: `0x0954dc491c502849d04956ef74634aa5931a08e8`
+
+
+For this fork’s audited changes, test results and remaining macOS/device gates, see [Hardening review](docs/HARDENING_REVIEW.md).
