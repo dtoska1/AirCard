@@ -166,6 +166,29 @@ This experimental change requires a fresh local Mac build and testing; it has
 not been validated with a real iPhone 15 Pro Max on iOS 27.0.1. Do not use its
 results alone to authorize an artwork write.
 
+### Original artwork recovery check (Mac-only, experimental)
+
+The **Recovery Check** button runs `artwork_recovery_probe.py` locally and
+checks only existing `~/Library/Passes/Cards/*.pkpass` folders on the Mac for
+`cardBackgroundCombined*.urls` reference files. It shows **counts only**:
+folders examined, reference files present and files containing a plausible
+HTTP(S) artwork URL. It does not reveal URLs, card identifiers, authentication
+tokens or the file contents. There are no network requests, iPhone reads,
+AirLift operations, artwork writes or cache removals.
+
+**A zero result does not imply the iPhone has no original artwork references.**
+Some Macs (including Macs without a Wallet payment cache) have no local payment
+pass folders, even if the iPhone's Wallet cards are present and working.
+
+The iPhone's protected Wallet pass folders are **outside this first-stage
+diagnostic**. The existing `read_file` helper is *not* a pure read: it
+temporarily relocates a protected file and attempts to put it back. We must
+review and test recovery from timeouts, disconnects and restore failures before
+exposing any diagnostic that touches protected Wallet files. Do not treat this
+check as an artwork recovery tool, and do not use the Clear Image button to
+try to undo a flash. The app has no verified byte-for-byte undo for artwork
+that was already overwritten, and cannot guarantee removal of historical logs.
+
 ### If scanning finds no cards
 
 The scanner uses the iPhone's unified log service, including Info/Debug events.
