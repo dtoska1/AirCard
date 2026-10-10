@@ -58,6 +58,12 @@ class StreamingTimeoutTests(unittest.TestCase):
                 getattr(skin, operation)(*args)
             self.assertEqual([call.args[0] for call in native.call_args_list], ['snapshot-books', 'stage', 'finish-write'])
 
+    def test_preimage_rejection_does_not_restore_over_external_changes(self):
+        rejected = {"exitCode": 1, "operation": {"ok": False, "cleanupAuthorized": False}}
+        with patch.object(skin, "native", side_effect=[OK, rejected]) as native:
+            self.assertFalse(skin.write_file("synthetic-device", "/synthetic", "leaf", b"x", retries=1))
+        self.assertEqual([call.args[0] for call in native.call_args_list], ["snapshot-books", "stage"])
+
     def test_failed_stage_still_cleans_up(self):
         responses = [OK, {'exitCode': 1}, OK]
         with patch.object(skin, 'native', side_effect=responses) as native, patch.object(skin, 'run_json') as transfer:

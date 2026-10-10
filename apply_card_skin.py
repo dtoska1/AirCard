@@ -210,6 +210,8 @@ def staged_write(udid, source, link, recovered, archive_path, books_path, snapsh
         stage = native("stage", udid, source, link, recovered,
                        os.fspath(archive_path), os.fspath(books_path), os.fspath(snapshot_root))
         if not operation_ok(stage):
+            if stage.get("operation", {}).get("cleanupAuthorized") is False:
+                cleanup["done"] = True  # Native preflight rejected without mutation.
             raise RuntimeError("Could not stage AirLift write")
         yield cleanup
     finally:
@@ -243,29 +245,23 @@ def operation_ok(result: dict) -> bool:
 
 
 def read_file(udid: str, target: str, leaf: str, retries: int = 1) -> "bytes | None":
-    """Exports a file outside Media into Media, reads it via AFC, restores it.
+    """Export/read/restore a file, preserving the recovery object on uncertainty.
 
-    Move semantics: the AirTraffic sync MOVES target/leaf to Media/recovered.
-    The original is written back immediately with write_file, then the export
-    staging is cleaned and Books preimage restored. Returns file bytes, or
-    None on failure. Test only on disposable paths before Wallet data.
+    AirTraffic MOVES the original to Media. Never delete that object unless the
+    original has been written back. Failed reads retain a local Books snapshot.
     """
-    if "/" in leaf or leaf in ("", ".", ".."):
+    if "/" in leaf or "\\" in leaf or "\x00" in leaf or leaf in ("", ".", ".."):
         raise ValueError("leaf must be a plain file name")
     for attempt in range(1, max(1, retries) + 1):
+        transfer_started = False
         try:
             token = secrets.token_hex(10)
             source = f"{SOURCE_PREFIX}{token}"
             link_destination = f"{LINK_PREFIX}{token}"
             recovered = f"{RECOVERED_PREFIX}{token}"
-
-            link_identifier = f"../../{source}/p0/p1/p2/link"
-            target_path = posixpath.join(target, leaf)
-            target_identifier = posixpath.relpath(target_path, AIRLOCK_ROOT)
-
-            identifiers = [link_identifier, target_identifier]
+            identifiers = [f"../../{source}/p0/p1/p2/link",
+                           posixpath.relpath(posixpath.join(target, leaf), AIRLOCK_ROOT)]
             destinations = [link_destination, recovered]
-
             with tempfile.TemporaryDirectory(prefix="airlift-read-") as temporary:
                 work = Path(temporary)
                 archive_path = work / "payload.zip"
@@ -273,87 +269,57 @@ def read_file(udid: str, target: str, leaf: str, retries: int = 1) -> "bytes | N
                 local_out = work / "recovered.bin"
                 snapshot_root = work / "books-snapshot"
                 snapshot_root.mkdir()
-
                 archive_path.write_bytes(build_archive(target, b"aircard-backup-staging"))
                 books_path.write_bytes(build_books(identifiers))
-
                 snapshot = native("snapshot-books", udid, os.fspath(snapshot_root))
                 if not operation_ok(snapshot):
-                    if attempt < retries:
-                        time.sleep(0.3 * attempt)
-                        continue
                     return None
-
-                stage = native(
-                    "stage",
-                    udid,
-                    source,
-                    link_destination,
-                    recovered,
-                    os.fspath(archive_path),
-                    os.fspath(books_path),
-                    os.fspath(snapshot_root),
-                )
-                if not operation_ok(stage):
-                    try:
-                        native("finish-write", udid, source, link_destination,
-                               recovered, os.fspath(snapshot_root))
-                    except Exception:
-                        pass
-                    if attempt < retries:
-                        time.sleep(0.3 * attempt)
-                        continue
-                    return None
-
-                atc_cmd = [os.fspath(AIRTRAFFIC_HOST), udid]
-                for identifier, destination in zip(identifiers, destinations):
-                    atc_cmd.extend((identifier, destination))
+                transfer_started = False
+                completed = False
                 try:
+                    stage = native("stage", udid, source, link_destination, recovered,
+                                   os.fspath(archive_path), os.fspath(books_path), os.fspath(snapshot_root))
+                    if not operation_ok(stage):
+                        completed = stage.get("operation", {}).get("cleanupAuthorized") is False
+                        return None
+                    atc_cmd = [os.fspath(AIRTRAFFIC_HOST), udid]
+                    for identifier, destination in zip(identifiers, destinations):
+                        atc_cmd.extend((identifier, destination))
+                    transfer_started = True
                     atc = run_json(atc_cmd, timeout=120)
-                except Exception:
-                    # Transfer may have moved the original before failing. Keep
-                    # generated recovery data, restore Books only, retain snapshot.
-                    retain_read_recovery(udid, snapshot_root)
-                    return None
-                if not (atc.get("exitCode") == 0 and atc.get("ok")):
-                    retain_read_recovery(udid, snapshot_root)
-                    return None
-
-                rd = native("afc-read", udid, recovered, os.fspath(local_out))
-                if not operation_ok(rd) or not local_out.is_file():
-                    # Original is sitting in Media/recovered; do NOT delete it.
-                    # Leave staging for manual recovery, report failure.
-                    retain_read_recovery(udid, snapshot_root)
-                    return None
-                data = local_out.read_bytes()
-
-                try:
-                    restored = write_file(udid, target, leaf, data, retries=3)
-                except Exception:
-                    restored = False
-                if not restored:
-                    # The recovered file may now be the ONLY original. Do not
-                    # call finish-write: it deletes recovered unconditionally.
-                    retain_read_recovery(udid, snapshot_root)
+                    if not (atc.get("exitCode") == 0 and atc.get("ok")):
+                        return None
+                    rd = native("afc-read", udid, recovered, os.fspath(local_out))
+                    if not operation_ok(rd) or not local_out.is_file():
+                        return None
+                    data = local_out.read_bytes()
+                    try:
+                        restored = write_file(udid, target, leaf, data, retries=3)
+                    except Exception:
+                        restored = False
+                    if not restored:
+                        return data
+                    finish = native("finish-write", udid, source, link_destination,
+                                    recovered, os.fspath(snapshot_root))
+                    completed = operation_ok(finish)
                     return data
-
-                finish = native(
-                    "finish-write",
-                    udid,
-                    source,
-                    link_destination,
-                    recovered,
-                    os.fspath(snapshot_root),
-                )
-                if restored and operation_ok(finish):
-                    return data
-                # Bytes were still captured; return them so caller can save
-                # a backup copy even if cleanup reported incomplete.
-                if data:
-                    return data
-                return None
+                finally:
+                    if not completed:
+                        if transfer_started:
+                            retain_read_recovery(udid, snapshot_root)
+                        else:
+                            try:
+                                finish = native("finish-write", udid, source, link_destination,
+                                                recovered, os.fspath(snapshot_root))
+                                cleaned = operation_ok(finish)
+                            except Exception:
+                                cleaned = False
+                            if not cleaned:
+                                preserve_books_snapshot(snapshot_root)
         except Exception:
-            pass
+            # A transfer failure is never retried: its original may have moved.
+            if transfer_started:
+                return None
         if attempt < retries:
             time.sleep(0.3 * attempt)
     return None
@@ -611,11 +577,11 @@ def main():
     hashes = [require_card_id(value) for value in sys.argv[3:]]
 
     print(f"Loaded image from batter: {len(img_data)} bytes")
-    print(f"Targeting {len(hashes)} cards on device {udid}...")
+    print(f"Targeting {len(hashes)} cards on device …{udid[-6:]}...")
 
     for index, h in enumerate(hashes, 1):
         target_dir = wallet_directory(h, ".pkpass")
-        print(f"\n[{index}/{len(hashes)}] Processing card: {h}")
+        print(f"\n[{index}/{len(hashes)}] Processing card: …{h[-6:]}")
 
         print("  -> Writing card artwork (fast batch)...")
         card_assets = [

@@ -34,6 +34,20 @@ class ReadFileTests(unittest.TestCase):
         self.assertNotIn("finish-write", calls)
         self.assertIn("restore-books", calls)
 
+    def test_read_exception_preserves_recovery_and_snapshot(self):
+        calls = []
+        def native(command, udid, *args):
+            calls.append(command)
+            if command == "afc-read":
+                raise TimeoutError("synthetic disconnect")
+            return _ok()
+        with patch.object(apply_card_skin, "native", side_effect=native), \
+             patch.object(apply_card_skin, "run_json", return_value={"exitCode": 0, "ok": True}), \
+             patch.object(apply_card_skin, "preserve_books_snapshot") as preserve:
+            self.assertIsNone(apply_card_skin.read_file("synthetic", "/var/tmp", "leaf"))
+        self.assertNotIn("finish-write", calls)
+        preserve.assert_called_once()
+
     def test_rejects_non_plain_leaf(self) -> None:
         for bad in ("", ".", "..", "a/b", "/abs"):
             with self.assertRaises(ValueError):
