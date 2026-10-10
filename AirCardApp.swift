@@ -558,6 +558,9 @@ class AppViewModel: ObservableObject {
     }
     @Published var walletCatalog = WalletCatalog.empty
     @Published var isReadingWalletCache = false
+    @Published private(set) var isCheckingArtworkReferences = false
+    @Published private(set) var artworkReferenceReport: WalletArtworkLocalProbe? = nil
+    @Published private(set) var artworkReferenceError = ""
     @Published var scannerMessage = "Open Wallet and scan cards to verify this iPhone's saved entries."
     @Published var currentScanIDs: Set<String> = []
     private var currentPreloadedIDs: Set<String> = []
@@ -862,6 +865,51 @@ class AppViewModel: ObservableObject {
                 }
             }
         }
+    }
+
+    // Safe first-stage diagnostic: Python only inspects local Mac Wallet pass
+    // metadata. It never invokes device_helper, AirLift, network or a flash.
+    func checkLocalArtworkReferences() {
+        guard !isCheckingArtworkReferences else { return }
+        isCheckingArtworkReferences = true
+        artworkReferenceReport = nil
+        artworkReferenceError = ""
+        let scriptDir = self.scriptDir
+        Task.detached {
+            var report: WalletArtworkLocalProbe?
+            do {
+                let process = Process()
+                process.executableURL = AppViewModel.pythonExecutableURL
+                process.environment = AppViewModel.processEnvironment
+                process.currentDirectoryURL = URL(fileURLWithPath: scriptDir)
+                process.arguments = ["artwork_recovery_probe.py"]
+                let output = Pipe()
+                process.standardOutput = output
+                process.standardError = FileHandle.nullDevice
+                try process.run()
+                let data = output.fileHandleForReading.readDataToEndOfFile()
+                process.waitUntilExit()
+                if process.terminationStatus == 0 {
+                    report = try JSONDecoder().decode(WalletArtworkLocalProbe.self, from: data)
+                }
+            } catch {
+                report = nil
+            }
+            let result = report
+            await MainActor.run {
+                self.artworkReferenceReport = result
+                self.artworkReferenceError = result == nil
+                    ? "Local check could not complete. No iPhone files were accessed or changed."
+                    : ""
+                self.isCheckingArtworkReferences = false
+            }
+        }
+    }
+
+    func dismissLocalArtworkReferences() {
+        guard !isCheckingArtworkReferences else { return }
+        artworkReferenceReport = nil
+        artworkReferenceError = ""
     }
 
     func recordScannedCard(_ id: String) {
@@ -2464,6 +2512,10 @@ struct ContentView: View {
             if vm.selectedTab == .walletCards {
                 WalletDiagnosticsView(vm: vm)
                 Divider()
+                if vm.artworkReferenceReport != nil || !vm.artworkReferenceError.isEmpty {
+                    artworkReferencePanel
+                    Divider()
+                }
                 if vm.correlation.step != .idle {
                     abaCorrelationPanel
                     Divider()
@@ -2744,6 +2796,14 @@ struct ContentView: View {
             .controlSize(.regular)
             .disabled(vm.device?.connected != true || vm.isCheckingDevice || vm.isFlashing)
             
+            Button(action: { vm.checkLocalArtworkReferences() }) {
+                Label(vm.isCheckingArtworkReferences ? "Checking Mac…" : "Recovery Check", systemImage: "magnifyingglass")
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.regular)
+            .disabled(vm.isCheckingArtworkReferences)
+            .help("Mac-only diagnostic: checks local Wallet metadata for original-artwork references. Does not access the iPhone.")
+
             Button("A/B/A Study") { vm.beginABACorrelation() }
                 .buttonStyle(.bordered)
                 .controlSize(.regular)
@@ -2821,6 +2881,36 @@ struct ContentView: View {
         .frame(height: 48)
     }
     
+    private var artworkReferencePanel: some View {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Original artwork recovery · Mac-only check")
+                    .font(.caption).fontWeight(.bold)
+                if let report = vm.artworkReferenceReport {
+                    Text("Local pass folders: \(report.passesChecked) · Reference files: \(report.referenceFiles) · Plausible URL files: \(report.plausibleUrlFiles)")
+                        .font(.caption2)
+                    Text(report.note)
+                        .font(.caption2).foregroundStyle(.secondary)
+                    if report.limited {
+                        Text("Local scan limited to the first 512 pass folders.")
+                            .font(.caption2).foregroundStyle(.orange)
+                    }
+                } else {
+                    Text(vm.artworkReferenceError)
+                        .font(.caption2).foregroundStyle(.orange)
+                }
+                Text("No iPhone access, downloads, artwork writes or payment-card changes.")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button("Close") { vm.dismissLocalArtworkReferences() }
+                .buttonStyle(.bordered).controlSize(.small)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 10)
+        .background(Color.blue.opacity(0.06))
+    }
+
     private var abaCorrelationPanel: some View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
