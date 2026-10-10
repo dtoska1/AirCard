@@ -312,7 +312,7 @@ def cmd_flash(udid: str, card_hash: str, image_path: str) -> bool:
         "card": card_hash,
         "step": total_steps,
         "total": total_steps,
-        "message": f"Successfully updated {card_hash[:12]}..."
+        "message": f"Artwork written and cache cleared for {card_hash[:12]}... Verify the intended card in Wallet."
     }))
     sys.stdout.flush()
     return True

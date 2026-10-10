@@ -1593,7 +1593,7 @@ class AppViewModel: ObservableObject {
                 } else {
                     self.statusText = "Complete! All cards updated."
                     self.showSuccessAlert = true
-                    self.log("Skins successfully applied to all selected cards!")
+                    self.log("Artwork writes and cache cleanup completed. Verify the intended cards in Wallet.")
                 }
             }
         }

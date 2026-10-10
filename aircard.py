@@ -72,8 +72,8 @@ def load_saved_cards() -> list[str]:
 
 def save_cards(cards: list[str]):
     """Saves unique card hashes to local storage."""
+    unique = list(dict.fromkeys(require_card_id(x) for x in cards))
     try:
-        unique = list(dict.fromkeys(require_card_id(x) for x in cards))
         CARDS_STORE_PATH.write_text(json.dumps(unique, indent=2), encoding="utf-8")
     except Exception:
         pass
@@ -412,8 +412,8 @@ def main():
             indices = [int(x.strip()) for x in choice.split(",") if x.strip()]
             selected_hashes = [hashes[i - 1] for i in indices if 1 <= i <= len(hashes)]
         except Exception:
-            print("Invalid input. Applying to all cards.")
-            selected_hashes = hashes
+            print("Invalid selection. No cards were changed.")
+            sys.exit(2)
 
     if not selected_hashes:
         print("❌ No cards selected.")
@@ -433,21 +433,27 @@ def main():
     # 5. Flash cards
     print(f"\n[5/5] Flashing skin to selected cards ({len(selected_hashes)})...")
 
+    all_ok = True
     for idx, h in enumerate(selected_hashes, 1):
         print(f"\n--- [{idx}/{len(selected_hashes)}] Card: …{h[-6:]} ---")
         pkpass_dir = wallet_directory(h, ".pkpass")
 
         for asset in TARGET_ASSETS:
             ok = write_file(device["udid"], pkpass_dir, asset, png_bytes)
+            all_ok = all_ok and ok
             status = "OK" if ok else "FAIL"
             print(f"  -> {asset}: {status}")
 
         ok_cache = invalidate_cache(device["udid"], h)
+        all_ok = all_ok and ok_cache
         status = "OK" if ok_cache else "PARTIAL"
         print(f"  -> System cache cleared (.cache & .pkcache): {status}")
 
     print("\n" + "=" * 60)
-    print("🎉 DONE! All selected cards successfully updated!")
+    if not all_ok:
+        print("Artwork write or cache invalidation failed. Check the selected card before retrying.")
+        sys.exit(1)
+    print("Artwork write and cache cleanup completed. Verify the intended card in Wallet.")
     print("=" * 60)
     print("1. Force close Apple Wallet on your iPhone.")
     print("2. If the image does not update immediately, restart your iPhone.")
