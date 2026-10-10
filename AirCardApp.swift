@@ -870,7 +870,7 @@ class AppViewModel: ObservableObject {
         if let index = cards.firstIndex(where: { $0.id == id }) {
             if !cards[index].confirmed { cards[index].confirmed = true }
         } else {
-            cards.append(CardItem(id: id, isSelected: !correlation.isRunning, displayName: walletCatalog.name(for: id), confirmed: true))
+            cards.append(CardItem(id: id, isSelected: correlation.step == .idle, displayName: walletCatalog.name(for: id), confirmed: true))
             NSSound(named: "Glass")?.play()
         }
         scannerMessage = "Detected \(currentScanIDs.count) distinct card(s) this scan. Open any missing card in Wallet to check it."
@@ -892,7 +892,7 @@ class AppViewModel: ObservableObject {
         if let index = cards.firstIndex(where: { $0.id == id }) {
             if !cards[index].confirmed { cards[index].confirmed = true }
         } else {
-            cards.append(CardItem(id: id, isSelected: !correlation.isRunning, displayName: walletCatalog.name(for: id), confirmed: true))
+            cards.append(CardItem(id: id, isSelected: correlation.step == .idle, displayName: walletCatalog.name(for: id), confirmed: true))
             NSSound(named: "Glass")?.play()
         }
         scannerMessage = "Verified \(currentVerifiedCardIDs.count) card(s) from this iPhone's current Wallet activity."
@@ -1544,6 +1544,10 @@ class AppViewModel: ObservableObject {
     // MARK: - Skin Application
     
     func applySkin() {
+        guard correlation.step == .idle else {
+            errorMessage = "Close the A/B/A study panel before writing artwork. Its results do not verify card identity."
+            return
+        }
         guard let udid = device?.udid else {
             errorMessage = "No iPhone connected."
             return
@@ -2062,6 +2066,9 @@ struct WalletCardView: View {
     var isVerified: Bool = true
     var isManual: Bool = false
     var isLive: Bool = false
+    // Transient diagnostic hint; never a saved name or issuer confirmation.
+    var studyHint: String? = nil
+    var studyLocked: Bool = false
     var onApprove: () -> Void = {}
     let onPickImage: () -> Void
     let onClearImage: () -> Void
@@ -2234,6 +2241,14 @@ struct WalletCardView: View {
                     .font(.system(size: 13, weight: .semibold))
                     .lineLimit(2)
                     .help(card.displayName ?? "No matching name in the Mac cache. The card ID is preserved.")
+                if let studyHint = studyHint {
+                    Text(studyHint)
+                        .font(.caption2)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .help("Unverified event correlation, never proof of card identity.")
+                }
                 if card.customLabel != nil {
                     Text("Local label · verify on iPhone before flashing")
                         .font(.caption2)
@@ -2258,6 +2273,7 @@ struct WalletCardView: View {
                 if !isVerified && !isManual {
                     Button("Use this ID manually…") { confirmingOverride = true }
                         .font(.caption2)
+                        .disabled(studyLocked)
                         .confirmationDialog("Approve this unverified card ID?", isPresented: $confirmingOverride) {
                             Button("Approve manual override") { onApprove() }
                             Button("Cancel", role: .cancel) {}
@@ -2276,7 +2292,8 @@ struct WalletCardView: View {
             HStack(spacing: 8) {
                 Toggle("", isOn: $card.isSelected)
                     .labelsHidden()
-                    .help("Include in flash")
+                    .disabled(studyLocked)
+                    .help(studyLocked ? "A/B/A is diagnostic only. Close panel before selection." : "Include in flash")
                 
                 Text("#\(cardIndex + 1)")
                     .font(.system(size: 12, weight: .semibold))
@@ -2474,6 +2491,8 @@ struct ContentView: View {
                                     isVerified: vm.currentVerifiedCardIDs.contains(cardID),
                                     isManual: vm.manualCardIDs.contains(cardID),
                                     isLive: vm.currentScanIDs.contains(cardID),
+                                    studyHint: vm.correlation.unverifiedHint(for: cardID),
+                                    studyLocked: vm.correlation.step != .idle,
                                     onApprove: { vm.approveManualCard(cardID) },
                                     onPickImage: { openCardImagePicker(for: cardID) },
                                     onClearImage: { vm.clearCardImage(for: cardID) },
@@ -2736,7 +2755,7 @@ struct ContentView: View {
             }
             .buttonStyle(.bordered)
             .controlSize(.regular)
-            .disabled(vm.device?.connected != true || vm.isCheckingDevice || vm.isFlashing || vm.isIdentifyingCard)
+            .disabled(vm.device?.connected != true || vm.isCheckingDevice || vm.isFlashing || vm.isIdentifyingCard || vm.correlation.isRunning)
             .help("Choose one card on the iPhone, confirm the explicit selection event and save a local nickname")
 
             if vm.isIdentifyingCard {
@@ -2758,6 +2777,7 @@ struct ContentView: View {
                 .buttonStyle(.bordered)
                 .controlSize(.regular)
                 .help("Assign one skin to all selected cards")
+                .disabled(vm.correlation.step != .idle)
             }
             
             Spacer()
@@ -2765,13 +2785,14 @@ struct ContentView: View {
             if !vm.cards.isEmpty {
                 HStack(spacing: 8) {
                     Button("Select All") {
-                        guard !vm.correlation.isRunning else { return }
+                        guard vm.correlation.step == .idle else { return }
                         for idx in vm.cards.indices {
                             vm.cards[idx].isSelected = true
                         }
                     }
                     .buttonStyle(.link)
                     .font(.caption)
+                    .disabled(vm.correlation.step != .idle)
                     
                     Text("·").foregroundColor(.secondary)
                     
@@ -4097,7 +4118,7 @@ struct ContentView: View {
                     .buttonStyle(.borderedProminent)
                     .tint(.green)
                     .controlSize(.regular)
-                    .disabled(readyToFlashCount == 0 || vm.isFlashing || vm.device?.connected != true || vm.correlation.isRunning)
+                    .disabled(readyToFlashCount == 0 || vm.isFlashing || vm.device?.connected != true || vm.correlation.step != .idle)
                 }
             }
             
