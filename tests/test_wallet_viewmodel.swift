@@ -52,9 +52,16 @@ struct WalletViewModelTests {
         vm.advanceABACorrelation()
         precondition(vm.correlation.step == .finished)
         precondition(vm.correlation.targetOnlyCoincidences == Set([a]))
+        precondition(vm.correlation.unverifiedHint(for: a)?.contains("Possible target A") == true)
+        precondition(vm.correlation.unverifiedHint(for: b)?.contains("B-window only") == true)
         precondition(vm.cards.allSatisfy { !$0.isSelected })
+        // Even a simulated direct call cannot flash during a finished study.
+        vm.applySkin()
+        precondition(vm.errorMessage?.contains("Close the A/B/A study panel") == true)
+        vm.errorMessage = nil
         vm.cancelABACorrelation()
         precondition(vm.correlation.step == .idle)
+        precondition(vm.correlation.unverifiedHint(for: a) == nil)
         vm.isScanningCards = true // synthetic test resumes without launching device helper
         vm.beginCardIdentification()
         precondition(vm.isIdentifyingCard)
