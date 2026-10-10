@@ -102,6 +102,33 @@ through the live-ID-matched device cache, are shown or eligible to flash; saved
 records only restore their skin after revalidation.
 Cache counts are not the phone's total, and phone Wallet order is not synchronized. See
 [card identification and diagnostics](docs/wallet-discovery.md).
+### Naming cards without a Mac Wallet archive (experimental)
+
+On some Macs, `~/Library/Passes/RemoteDevices.archive` does not exist. **Read Cache**
+cannot provide bank/card names there, even when scanning successfully discovers
+multiple IDs. You do not need to recreate or download that archive.
+
+For a more cautious, local identification workflow:
+
+1. Connect and unlock the iPhone, select **Identify Card** in the Wallet tab.
+   The scanner starts automatically if necessary.
+2. **After** clicking Identify Card, open **one** specific card on the iPhone.
+3. AirCard waits for a log event explicitly saying `selected pass uniqueID`.
+   Lists like `passIDs[global]`, Dashboard preload logs and generic tokens
+   are never used to label a supposedly selected card.
+4. If that event appears, verify the iPhone was showing the card you intended,
+   then enter a **friendly nickname only**. Do not enter a card number.
+   If unsure, cancel; the nickname is not proof of issuer identity.
+5. The label stays in your local, **per-device** saved-card records. It does
+   not change or transmit banking data, and labeling never auto-selects a card
+   for flashing. Re-check the card on the phone before any eventual write.
+
+**Limitation:** iOS may redact or omit explicit selection events, including on
+iOS 27.0.1. In that case Identify Card remains waiting; use Cancel Identify.
+The app deliberately does not guess which of several global pass IDs was
+opened. This workflow has not yet been compiled or tested on real iOS 27.0.1
+hardware. Rebuild the `hardening` branch and run its Mac tests before using it.
+
 ### If scanning finds no cards
 
 The scanner uses the iPhone's unified log service, including Info/Debug events.
