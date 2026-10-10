@@ -1262,6 +1262,8 @@ class AppViewModel: ObservableObject {
         guard correlation.isRunning, isScanningCards, device?.connected == true else { return }
         correlation.advance()
         for index in cards.indices { cards[index].isSelected = false }
+        // Freeze the completed comparison; new log events must not change it.
+        if correlation.step == .finished { stopCardScanning() }
     }
 
     func cancelABACorrelation() { correlation.cancel() }
