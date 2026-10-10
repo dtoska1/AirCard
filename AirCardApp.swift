@@ -2887,8 +2887,12 @@ struct ContentView: View {
                 Text("Original artwork recovery · Mac-only check")
                     .font(.caption).fontWeight(.bold)
                 if let report = vm.artworkReferenceReport {
-                    Text("Local pass folders: \(report.passesChecked) · Reference files: \(report.referenceFiles) · Plausible URL files: \(report.plausibleUrlFiles)")
+                    Text("Scan status: \(report.status) · Local pass folders: \(report.passesChecked) · Reference files: \(report.referenceFiles) · Plausible URL files: \(report.plausibleUrlFiles)")
                         .font(.caption2)
+                    if report.errors > 0 {
+                        Text("\(report.errors) inaccessible, unreadable or oversized entries; result is incomplete.")
+                            .font(.caption2).foregroundStyle(.orange)
+                    }
                     Text(report.note)
                         .font(.caption2).foregroundStyle(.secondary)
                     if report.limited {
@@ -2899,7 +2903,7 @@ struct ContentView: View {
                     Text(vm.artworkReferenceError)
                         .font(.caption2).foregroundStyle(.orange)
                 }
-                Text("No iPhone access, downloads, artwork writes or payment-card changes.")
+                Text("This check only inspects local Mac files. AirCard startup can separately probe a connected iPhone; disconnect it for a device-free check.")
                     .font(.caption2).foregroundStyle(.secondary)
             }
             Spacer()
