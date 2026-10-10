@@ -567,6 +567,7 @@ class AppViewModel: ObservableObject {
     private var catalogRequestID = UUID()
     private var catalogRefreshTask: Task<Void, Never>?
     private var pendingActivationIDs: Set<String> = []
+    @Published private(set) var correlation = WalletABACorrelation()
     @Published private(set) var isIdentifyingCard = false
     @Published private(set) var identificationMessage = ""
     @Published private(set) var identificationSignalCounts: [String: Int] = [:]
@@ -801,6 +802,7 @@ class AppViewModel: ObservableObject {
         currentScanIDs = []
         currentPreloadedIDs = []
         pendingActivationIDs = []
+        correlation.cancel()
         isIdentifyingCard = false
         pendingIdentifiedCardID = nil
         showCardNamingSheet = false
@@ -868,7 +870,7 @@ class AppViewModel: ObservableObject {
         if let index = cards.firstIndex(where: { $0.id == id }) {
             if !cards[index].confirmed { cards[index].confirmed = true }
         } else {
-            cards.append(CardItem(id: id, displayName: walletCatalog.name(for: id), confirmed: true))
+            cards.append(CardItem(id: id, isSelected: !correlation.isRunning, displayName: walletCatalog.name(for: id), confirmed: true))
             NSSound(named: "Glass")?.play()
         }
         scannerMessage = "Detected \(currentScanIDs.count) distinct card(s) this scan. Open any missing card in Wallet to check it."
@@ -890,7 +892,7 @@ class AppViewModel: ObservableObject {
         if let index = cards.firstIndex(where: { $0.id == id }) {
             if !cards[index].confirmed { cards[index].confirmed = true }
         } else {
-            cards.append(CardItem(id: id, displayName: walletCatalog.name(for: id), confirmed: true))
+            cards.append(CardItem(id: id, isSelected: !correlation.isRunning, displayName: walletCatalog.name(for: id), confirmed: true))
             NSSound(named: "Glass")?.play()
         }
         scannerMessage = "Verified \(currentVerifiedCardIDs.count) card(s) from this iPhone's current Wallet activity."
@@ -977,6 +979,7 @@ class AppViewModel: ObservableObject {
     
     func clearAllCards() {
         cancelCardIdentification()
+        correlation.cancel()
         currentScanIDs = []
         currentPreloadedIDs = []
         manualCardIDs = []
@@ -1030,6 +1033,7 @@ class AppViewModel: ObservableObject {
 
     func selectDevice(_ dev: DeviceInfo) {
         guard dev.udid != self.device?.udid else { return }
+        correlation.cancel()
 
         if isScanningCards {
             scanProcess?.terminate()
@@ -1243,10 +1247,30 @@ class AppViewModel: ObservableObject {
     
     // MARK: - Live Card Scanner
 
+    // Optional read-only experiment. Switch cards while paused, then capture.
+    func beginABACorrelation() {
+        guard device?.connected == true, !isFlashing else { return }
+        cancelCardIdentification()
+        if !isScanningCards { startCardScanning() }
+        guard isScanningCards else { return }
+        correlation.begin()
+        for index in cards.indices { cards[index].isSelected = false }
+        scannerMessage = "Read-only A/B/A experiment: no card is identified or queued for flashing."
+    }
+
+    func advanceABACorrelation() {
+        guard correlation.isRunning, isScanningCards, device?.connected == true else { return }
+        correlation.advance()
+        for index in cards.indices { cards[index].isSelected = false }
+    }
+
+    func cancelABACorrelation() { correlation.cancel() }
+
     // Start after the user is ready to open exactly one card on this phone.
     // A global pass-ID list alone never counts as a selected-card event.
     func beginCardIdentification() {
         guard device?.connected == true, !isFlashing else { return }
+        correlation.cancel()
         if !isScanningCards { startCardScanning() }
         guard isScanningCards else { return }
         isIdentifyingCard = true
@@ -1439,6 +1463,14 @@ class AppViewModel: ObservableObject {
                                 self.reconcileMatchedPaymentCards()
                             }
                         }
+                        if !structured.isEmpty {
+                            await MainActor.run {
+                                guard self.scanProcess === proc else { return }
+                                if self.correlation.isCapturing {
+                                    self.correlation.observe(line: line, structuredIDs: structured)
+                                }
+                            }
+                        }
                         let evidence = WalletScanParser.selectionEvidence(in: line)
                         if !evidence.isEmpty {
                             await MainActor.run {
@@ -1455,6 +1487,7 @@ class AppViewModel: ObservableObject {
                     self.scanProcess = nil
                     self.isScanningCards = false
                     self.isIdentifyingCard = false
+                    if self.correlation.isRunning { self.correlation.cancel() }
                     self.statusText = "Card scanning ended. Check the log and reconnect the iPhone to retry."
                     self.scannerMessage = "Scanner stopped unexpectedly (exit \(proc.terminationStatus)). Reconnect and unlock the iPhone, then scan again. Check Log for details."
                     self.log("Syslog monitor exited (status \(proc.terminationStatus)). Total cards: \(self.cards.count).")
@@ -1469,6 +1502,7 @@ class AppViewModel: ObservableObject {
                     self.log("Syslog monitor stopped: \(error.localizedDescription)")
                     self.isScanningCards = false
                     self.isIdentifyingCard = false
+                    if self.correlation.isRunning { self.correlation.cancel() }
                     self.statusText = "Card scanning failed. Check the log and retry."
                     self.scannerMessage = "The log connection failed. Reconnect the iPhone and retry scanning."
                 }
@@ -1478,6 +1512,7 @@ class AppViewModel: ObservableObject {
     
     func stopCardScanning() {
         isIdentifyingCard = false
+        if correlation.isRunning { correlation.cancel() }
         catalogRefreshTask?.cancel()
         pendingActivationIDs = []
         if isScanningCards {
@@ -2407,6 +2442,10 @@ struct ContentView: View {
             if vm.selectedTab == .walletCards {
                 WalletDiagnosticsView(vm: vm)
                 Divider()
+                if vm.correlation.step != .idle {
+                    abaCorrelationPanel
+                    Divider()
+                }
             }
 
             // 4. Main Workspace
@@ -2681,6 +2720,12 @@ struct ContentView: View {
             .controlSize(.regular)
             .disabled(vm.device?.connected != true || vm.isCheckingDevice || vm.isFlashing)
             
+            Button("A/B/A Study") { vm.beginABACorrelation() }
+                .buttonStyle(.bordered)
+                .controlSize(.regular)
+                .disabled(vm.device?.connected != true || vm.isFlashing || vm.isCheckingDevice || vm.correlation.isRunning)
+                .help("Read-only target A, Express B, target A correlation")
+
             Button(action: { vm.beginCardIdentification() }) {
                 Label(vm.isIdentifyingCard ? "Waiting for Card…" : "Identify Card", systemImage: "creditcard")
             }
@@ -2715,6 +2760,7 @@ struct ContentView: View {
             if !vm.cards.isEmpty {
                 HStack(spacing: 8) {
                     Button("Select All") {
+                        guard !vm.correlation.isRunning else { return }
                         for idx in vm.cards.indices {
                             vm.cards[idx].isSelected = true
                         }
@@ -2747,6 +2793,35 @@ struct ContentView: View {
         .frame(height: 48)
     }
     
+    private var abaCorrelationPanel: some View {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Experimental A → B → A study · read-only")
+                    .font(.caption).fontWeight(.bold)
+                Text(vm.correlation.instruction)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Text(vm.correlation.summary)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(3)
+            }
+            Spacer()
+            if vm.correlation.isRunning {
+                Button(vm.correlation.buttonTitle) { vm.advanceABACorrelation() }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .disabled(!vm.isScanningCards)
+            }
+            Button(vm.correlation.isRunning ? "Cancel" : "Close") { vm.cancelABACorrelation() }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 10)
+        .background(Color.orange.opacity(0.07))
+    }
+
     private var scanningNoticeBanner: some View {
         HStack(spacing: 12) {
             Image(systemName: "iphone.radiowaves.left.and.right")
@@ -4017,7 +4092,7 @@ struct ContentView: View {
                     .buttonStyle(.borderedProminent)
                     .tint(.green)
                     .controlSize(.regular)
-                    .disabled(readyToFlashCount == 0 || vm.isFlashing || vm.device?.connected != true)
+                    .disabled(readyToFlashCount == 0 || vm.isFlashing || vm.device?.connected != true || vm.correlation.isRunning)
                 }
             }
             
