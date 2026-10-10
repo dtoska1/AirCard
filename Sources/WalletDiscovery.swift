@@ -103,6 +103,27 @@ enum WalletScanParser {
             return id
         }
     }
+    // Only category counts are surfaced to the UI; never raw Wallet log lines.
+    // An explicit selection may be absent or redacted on newer iOS releases.
+    static func selectionEvidence(in line: String) -> [String] {
+        let lower = line.lowercased()
+        var events: [String] = []
+        if lower.contains("selected pass uniqueid") {
+            if !selectedPassIDs(in: line).isEmpty {
+                events.append("selected")
+            } else if lower.contains("<private>") || lower.contains("<redacted>") {
+                events.append("redacted")
+            } else {
+                events.append("unrecognized")
+            }
+        }
+        if lower.contains("passids[insession]") { events.append("inSession") }
+        if lower.contains("passids[global]") { events.append("global") }
+        if lower.contains("dashboard loading") { events.append("dashboard") }
+        if lower.contains("setactivepaymentapplet") { events.append("activation") }
+        return events
+    }
+
     static let activation = try! NSRegularExpression(
         pattern: #"setActivePaymentApplet.{0,4096}?requestedApplet\s*:.{0,4096}?(?:identifier\s*=\s*|\"identifier\"\s*:\s*\")([A-Fa-f0-9]{10,64})\b"#,
         options: [.caseInsensitive, .dotMatchesLineSeparators]
