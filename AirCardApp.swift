@@ -2760,6 +2760,7 @@ struct ContentView: View {
                     .foregroundColor(.blue)
                 Text(vm.isIdentifyingCard ? vm.identificationMessage : "Double-click Side button (Apple Pay), pass Face ID, then tap your card.")
                     .font(.caption2)
+                    .foregroundColor(.secondary)
                 if vm.isIdentifyingCard {
                     Text(vm.identificationSignalSummary)
                         .font(.caption2)
@@ -2767,7 +2768,6 @@ struct ContentView: View {
                         .lineLimit(2)
                         .help("Counts only. No card IDs, device IDs or raw log lines are displayed.")
                 }
-                    .foregroundColor(.secondary)
             }
             
             Spacer()
