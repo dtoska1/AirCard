@@ -30,9 +30,15 @@ class BuildSupportTests(unittest.TestCase):
             self.assertIn('cannot import the backend', result.stderr)
 
     def test_broken_first_python_does_not_hide_gui_selection_failure(self):
-        result = self.shell('aircard_check_python "$@"', ROOT, '/bin/false', sys.executable)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn('GUI selects /bin/false', result.stderr)
+        # /bin/false does not exist on every macOS version. Use a controlled
+        # executable fixture so the first selected interpreter always fails.
+        with tempfile.TemporaryDirectory() as temp:
+            broken = Path(temp) / 'broken-python'
+            broken.write_text('#!/bin/sh\nexit 73\n')
+            broken.chmod(0o755)
+            result = self.shell('aircard_check_python "$@"', ROOT, broken, sys.executable)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(f'GUI selects {broken}', result.stderr)
 
     def test_signatures_are_created_inside_out_in_both_modes(self):
         for identity in ('-', 'Developer ID Application: Test'):
