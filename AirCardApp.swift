@@ -1228,7 +1228,58 @@ class AppViewModel: ObservableObject {
     }
     
     // MARK: - Live Card Scanner
-    
+
+    // Start after the user is ready to open exactly one card on this phone.
+    // A global pass-ID list alone never counts as a selected-card event.
+    func beginCardIdentification() {
+        guard device?.connected == true, !isFlashing else { return }
+        if !isScanningCards { startCardScanning() }
+        guard isScanningCards else { return }
+        isIdentifyingCard = true
+        pendingIdentifiedCardID = nil
+        showCardNamingSheet = false
+        identificationMessage = "Open ONE card in Wallet now. Waiting for an explicit selected-pass event; global lists do not count."
+    }
+
+    func cancelCardIdentification() {
+        isIdentifyingCard = false
+        pendingIdentifiedCardID = nil
+        showCardNamingSheet = false
+        identificationMessage = ""
+    }
+
+    func observeSelectedPassEvent(_ line: String) {
+        guard isIdentifyingCard, isScanningCards else { return }
+        let ids = WalletScanParser.selectedPassIDs(in: line)
+        guard !ids.isEmpty else { return }
+        guard ids.count == 1 else {
+            isIdentifyingCard = false
+            identificationMessage = "More than one selected pass was reported. Restart identification with one card."
+            return
+        }
+        let id = ids[0]
+        recordScannedCard(id)
+        pendingIdentifiedCardID = id
+        isIdentifyingCard = false
+        identificationMessage = "Selected-pass event for …\(id.suffix(6)). Confirm this is the card you just opened."
+        showCardNamingSheet = true
+    }
+
+    @discardableResult
+    func confirmIdentifiedCardName(_ raw: String) -> Bool {
+        guard let id = pendingIdentifiedCardID, WalletScanParser.isValidCardID(id),
+              let index = cards.firstIndex(where: { $0.id == id }) else { return false }
+        let label = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !label.isEmpty, label.count <= 60,
+              label.rangeOfCharacter(from: .controlCharacters) == nil else { return false }
+        cards[index].customLabel = label
+        cards[index].displayName = label
+        cards[index].isSelected = false // Naming never queues artwork for transfer.
+        log("Saved local label for selected pass …\(id.suffix(6)); user-confirmed, not bank-verified.")
+        cancelCardIdentification()
+        return true
+    }
+
     func toggleCardScanning() {
         if isScanningCards {
             stopCardScanning()
@@ -1367,6 +1418,12 @@ class AppViewModel: ObservableObject {
                                 self.reconcileMatchedPaymentCards()
                             }
                         }
+                        if !WalletScanParser.selectedPassIDs(in: line).isEmpty {
+                            await MainActor.run {
+                                guard self.scanProcess === proc else { return }
+                                self.observeSelectedPassEvent(line)
+                            }
+                        }
                     }
                     if chunk.isEmpty { break }
                 }
@@ -1375,6 +1432,7 @@ class AppViewModel: ObservableObject {
                     guard self.scanProcess === proc else { return }
                     self.scanProcess = nil
                     self.isScanningCards = false
+                    self.isIdentifyingCard = false
                     self.statusText = "Card scanning ended. Check the log and reconnect the iPhone to retry."
                     self.scannerMessage = "Scanner stopped unexpectedly (exit \(proc.terminationStatus)). Reconnect and unlock the iPhone, then scan again. Check Log for details."
                     self.log("Syslog monitor exited (status \(proc.terminationStatus)). Total cards: \(self.cards.count).")
@@ -1388,6 +1446,7 @@ class AppViewModel: ObservableObject {
                     self.scanProcess = nil
                     self.log("Syslog monitor stopped: \(error.localizedDescription)")
                     self.isScanningCards = false
+                    self.isIdentifyingCard = false
                     self.statusText = "Card scanning failed. Check the log and retry."
                     self.scannerMessage = "The log connection failed. Reconnect the iPhone and retry scanning."
                 }
@@ -1396,6 +1455,7 @@ class AppViewModel: ObservableObject {
     }
     
     func stopCardScanning() {
+        isIdentifyingCard = false
         catalogRefreshTask?.cancel()
         pendingActivationIDs = []
         if isScanningCards {
