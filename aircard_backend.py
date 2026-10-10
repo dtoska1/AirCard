@@ -43,6 +43,7 @@ for lp in lib_paths:
 
 from apply_card_skin import (
     native,
+    AirliftOperationError,
     operation_ok,
     write_file,
     write_files_batch,
@@ -233,6 +234,9 @@ def cmd_flash(udid: str, card_hash: str, image_path: str) -> bool:
             asset_payloads,
             progress_callback=on_asset_progress,
         )
+    except AirliftOperationError as error:
+        print(json.dumps({"type": "error", "message": str(error)}), flush=True)
+        return False
     except (OSError, RuntimeError, subprocess.SubprocessError):
         ok = False
 
@@ -249,6 +253,9 @@ def cmd_flash(udid: str, card_hash: str, image_path: str) -> bool:
             sys.stdout.flush()
             try:
                 ok_single = write_file(udid, pkpass_dir, asset, payload)
+            except AirliftOperationError as error:
+                print(json.dumps({"type": "error", "message": str(error)}), flush=True)
+                return False
             except Exception:
                 ok_single = False
             if not ok_single:
@@ -268,6 +275,9 @@ def cmd_flash(udid: str, card_hash: str, image_path: str) -> bool:
         sys.stdout.flush()
         try:
             ok_cache = remove_files(udid, cache_dir, list(CACHE_FILES))
+        except AirliftOperationError as error:
+            print(json.dumps({"type": "error", "message": str(error)}), flush=True)
+            return False
         except Exception:
             ok_cache = False
         if not ok_cache:

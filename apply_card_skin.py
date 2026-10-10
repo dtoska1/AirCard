@@ -7,6 +7,9 @@ import os
 import plistlib
 import posixpath
 import secrets
+import selectors
+import shutil
+from contextlib import contextmanager
 import stat
 import struct
 import subprocess
@@ -106,62 +109,123 @@ def build_books(identifiers: list[str]) -> bytes:
 
 
 def run_json(command: list[str], timeout: int) -> dict:
-    completed = subprocess.run(
-        command,
-        check=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        timeout=timeout,
-    )
+    return run_json_streaming(command, timeout)
+
+
+def run_json_streaming(command: list[str], timeout: float, on_progress=None) -> dict:
+    """Drain both pipes without blocking on a newline; enforce a monotonic deadline."""
+    deadline = time.monotonic() + timeout
+    proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     result = None
-    for line in reversed(completed.stdout.splitlines()):
+    pending = b""
+    stderr_tail = b""
+    limit = 16 * 1024 * 1024
+    stderr_limit = 64 * 1024
+
+    def consume(line):
+        nonlocal result
         try:
-            val = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(val, dict):
-            result = val
-            break
-    if result is None:
-        raise RuntimeError(f"{Path(command[0]).name} failed: {completed.stderr}")
-    result["exitCode"] = completed.returncode
-    return result
+            value = json.loads(line)
+        except (ValueError, UnicodeDecodeError):
+            return
+        if isinstance(value, dict):
+            if value.get("type") == "atc_progress" and on_progress:
+                on_progress(value)
+            result = value
 
-
-def run_json_streaming(command: list[str], timeout: int, on_progress=None) -> dict:
-    proc = subprocess.Popen(
-        command,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        bufsize=1,
-    )
-    result = None
     try:
-        if proc.stdout:
-            for line in iter(proc.stdout.readline, ""):
-                line_str = line.strip()
-                if not line_str:
-                    continue
-                try:
-                    val = json.loads(line_str)
-                    if isinstance(val, dict):
-                        if val.get("type") == "atc_progress" and on_progress:
-                            on_progress(val)
-                        result = val
-                except json.JSONDecodeError:
-                    pass
-        proc.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        raise TimeoutError(f"{Path(command[0]).name} timed out after {timeout}s")
-
+        with selectors.DefaultSelector() as selector:
+            for stream in (proc.stdout, proc.stderr):
+                os.set_blocking(stream.fileno(), False)
+                selector.register(stream, selectors.EVENT_READ)
+            while selector.get_map() or proc.poll() is None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError(f"{Path(command[0]).name}: AirTraffic deadline exceeded after {timeout}s; sync/transfer did not finish")
+                for key, _ in selector.select(min(remaining, 0.1)):
+                    chunk = os.read(key.fileobj.fileno(), 8192)
+                    if not chunk:
+                        selector.unregister(key.fileobj)
+                        continue
+                    if key.fileobj is proc.stderr:
+                        stderr_tail = (stderr_tail + chunk)[-stderr_limit:]
+                    else:
+                        pending += chunk
+                        while b"\n" in pending:
+                            line, pending = pending.split(b"\n", 1)
+                            consume(line)
+                        if len(pending) > limit:
+                            raise RuntimeError("AirTraffic output exceeded the maximum line length")
+            if pending:
+                consume(pending)
+        proc.wait(timeout=max(0.001, deadline - time.monotonic()))
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=1)
+        proc.stdout.close()
+        proc.stderr.close()
     if result is None:
-        stderr = proc.stderr.read() if proc.stderr else ""
-        raise RuntimeError(f"{Path(command[0]).name} failed: {stderr}")
+        # Native stderr can contain device IDs/paths. Drain it, but never echo it.
+        raise RuntimeError(f"{Path(command[0]).name} returned no JSON result (exit {proc.returncode}; {len(stderr_tail)} diagnostic bytes withheld)")
     result["exitCode"] = proc.returncode
     return result
+
+
+class AirliftOperationError(RuntimeError):
+    """Stop high-level fallback after a timeout or uncertain restoration."""
+
+
+def preserve_books_snapshot(snapshot_root):
+    recovery_root = Path.home() / ".aircard-recovery"
+    recovery_root.mkdir(mode=0o700, exist_ok=True)
+    destination = recovery_root / secrets.token_hex(10)
+    shutil.copytree(snapshot_root, destination)
+    for directory, _, files in os.walk(destination):
+        os.chmod(directory, 0o700)
+        for name in files:
+            os.chmod(Path(directory) / name, 0o600)
+    return destination
+
+
+def retain_read_recovery(udid, snapshot_root):
+    # Persist first: disconnected devices can make restore-books itself raise.
+    location = preserve_books_snapshot(snapshot_root)
+    try:
+        native("restore-books", udid, os.fspath(snapshot_root))
+    except Exception:
+        pass
+    print(f"AirLift read needs recovery; original staging retained, Books snapshot: {location}", file=sys.stderr)
+
+
+@contextmanager
+def staged_write(udid, source, link, recovered, archive_path, books_path, snapshot_root):
+    """Restore Books even if staging or AirTraffic raises before returning JSON."""
+    cleanup = {"done": False}
+    try:
+        stage = native("stage", udid, source, link, recovered,
+                       os.fspath(archive_path), os.fspath(books_path), os.fspath(snapshot_root))
+        if not operation_ok(stage):
+            raise RuntimeError("Could not stage AirLift write")
+        yield cleanup
+    finally:
+        if not cleanup["done"]:
+            try:
+                finish = native("finish-write", udid, source, link, recovered, os.fspath(snapshot_root))
+                restored = operation_ok(finish)
+            except Exception:
+                restored = False
+            if not restored:
+                try:
+                    location = preserve_books_snapshot(snapshot_root)
+                except OSError as error:
+                    raise AirliftOperationError("Books restoration failed and its snapshot could not be retained; stop and inspect the device") from error
+                raise AirliftOperationError(f"Books restoration/cleanup could not be verified. Stop; recovery snapshot retained at {location}")
+
 
 
 def native(command: str, udid: str, *arguments: str) -> dict:
@@ -244,26 +308,34 @@ def read_file(udid: str, target: str, leaf: str, retries: int = 1) -> "bytes | N
                 atc_cmd = [os.fspath(AIRTRAFFIC_HOST), udid]
                 for identifier, destination in zip(identifiers, destinations):
                     atc_cmd.extend((identifier, destination))
-                atc = run_json(atc_cmd, timeout=120)
+                try:
+                    atc = run_json(atc_cmd, timeout=120)
+                except Exception:
+                    # Transfer may have moved the original before failing. Keep
+                    # generated recovery data, restore Books only, retain snapshot.
+                    retain_read_recovery(udid, snapshot_root)
+                    return None
                 if not (atc.get("exitCode") == 0 and atc.get("ok")):
-                    try:
-                        native("finish-write", udid, source, link_destination,
-                               recovered, os.fspath(snapshot_root))
-                    except Exception:
-                        pass
-                    if attempt < retries:
-                        time.sleep(0.3 * attempt)
-                        continue
+                    retain_read_recovery(udid, snapshot_root)
                     return None
 
                 rd = native("afc-read", udid, recovered, os.fspath(local_out))
                 if not operation_ok(rd) or not local_out.is_file():
                     # Original is sitting in Media/recovered; do NOT delete it.
                     # Leave staging for manual recovery, report failure.
+                    retain_read_recovery(udid, snapshot_root)
                     return None
                 data = local_out.read_bytes()
 
-                restored = write_file(udid, target, leaf, data, retries=3)
+                try:
+                    restored = write_file(udid, target, leaf, data, retries=3)
+                except Exception:
+                    restored = False
+                if not restored:
+                    # The recovered file may now be the ONLY original. Do not
+                    # call finish-write: it deletes recovered unconditionally.
+                    retain_read_recovery(udid, snapshot_root)
+                    return data
 
                 finish = native(
                     "finish-write",
@@ -323,39 +395,21 @@ def write_file(udid: str, target: str, leaf: str, payload: bytes, retries: int =
                         continue
                     return False
 
-                stage = native(
-                    "stage",
-                    udid,
-                    source,
-                    link_destination,
-                    recovered,
-                    os.fspath(archive_path),
-                    os.fspath(books_path),
-                    os.fspath(snapshot_root),
-                )
-                if not operation_ok(stage):
-                    if attempt < retries:
-                        time.sleep(0.3 * attempt)
-                        continue
-                    return False
+                with staged_write(udid, source, link_destination, recovered,
+                                  archive_path, books_path, snapshot_root):
+                    atc_cmd = [os.fspath(AIRTRAFFIC_HOST), udid]
+                    for identifier, destination in zip(identifiers, destinations):
+                        atc_cmd.extend((identifier, destination))
+                    atc = run_json(atc_cmd, timeout=120)
 
-                atc_cmd = [os.fspath(AIRTRAFFIC_HOST), udid]
-                for identifier, destination in zip(identifiers, destinations):
-                    atc_cmd.extend((identifier, destination))
-                atc = run_json(atc_cmd, timeout=120)
 
-                finish = native(
-                    "finish-write",
-                    udid,
-                    source,
-                    link_destination,
-                    recovered,
-                    os.fspath(snapshot_root),
-                )
-
-            ok = bool(atc.get("exitCode") == 0 and atc.get("ok") and operation_ok(finish))
+            ok = bool(atc.get("exitCode") == 0 and atc.get("ok"))
             if ok:
                 return True
+        except AirliftOperationError:
+            raise
+        except TimeoutError as error:
+            raise AirliftOperationError(str(error) + "; operation stopped") from error
         except Exception:
             pass
 
@@ -407,44 +461,26 @@ def write_files_batch(
                         continue
                     return False
 
-                stage = native(
-                    "stage",
-                    udid,
-                    source,
-                    link_destination,
-                    recovered,
-                    os.fspath(archive_path),
-                    os.fspath(books_path),
-                    os.fspath(snapshot_root),
-                )
-                if not operation_ok(stage):
-                    if attempt < retries:
-                        time.sleep(0.4 * attempt)
-                        continue
-                    return False
+                with staged_write(udid, source, link_destination, recovered,
+                                  archive_path, books_path, snapshot_root):
+                    atc_cmd = [os.fspath(AIRTRAFFIC_HOST), udid]
+                    for identifier, destination in zip(identifiers, destinations):
+                        atc_cmd.extend((identifier, destination))
 
-                atc_cmd = [os.fspath(AIRTRAFFIC_HOST), udid]
-                for identifier, destination in zip(identifiers, destinations):
-                    atc_cmd.extend((identifier, destination))
+                    timeout = max(120, len(files) * 2)
+                    if progress_callback:
+                        atc = run_json_streaming(atc_cmd, timeout=timeout, on_progress=progress_callback)
+                    else:
+                        atc = run_json(atc_cmd, timeout=timeout)
 
-                timeout = max(120, len(files) * 2)
-                if progress_callback:
-                    atc = run_json_streaming(atc_cmd, timeout=timeout, on_progress=progress_callback)
-                else:
-                    atc = run_json(atc_cmd, timeout=timeout)
 
-                finish = native(
-                    "finish-write",
-                    udid,
-                    source,
-                    link_destination,
-                    recovered,
-                    os.fspath(snapshot_root),
-                )
-
-            ok = bool(atc.get("exitCode") == 0 and atc.get("ok") and operation_ok(finish))
+            ok = bool(atc.get("exitCode") == 0 and atc.get("ok"))
             if ok:
                 return True
+        except AirliftOperationError:
+            raise
+        except TimeoutError as error:
+            raise AirliftOperationError(str(error) + "; operation stopped") from error
         except Exception:
             pass
 
@@ -493,32 +529,27 @@ def remove_files_batch(udid: str, target: str, leaves: list[str], retries: int =
                 snapshot = native("snapshot-books", udid, os.fspath(snapshot_root))
                 if not operation_ok(snapshot):
                     raise RuntimeError("could not snapshot Books state")
-                stage = native(
-                    "stage", udid, source, link_destination, recovered,
-                    os.fspath(archive_path), os.fspath(books_path),
-                    os.fspath(snapshot_root),
-                )
-                if not operation_ok(stage):
-                    raise RuntimeError("could not stage cache removal")
-
-                atc = run_json(
-                    [os.fspath(AIRTRAFFIC_HOST), udid,
-                     link_identifier, link_destination,
-                     *[part for pair in zip(protected_identifiers, removed_destinations)
-                       for part in pair]],
-                    timeout=120,
-                )
-                if atc.get("exitCode") != 0 or not atc.get("ok"):
-                    native("finish-write", udid, source, link_destination,
-                           recovered, os.fspath(snapshot_root))
-                    raise RuntimeError("could not relocate cache link")
-
-                finish = native(
-                    "finish-moved-removal", udid, source, link_destination,
-                    recovered, os.fspath(snapshot_root), str(len(leaves)),
-                )
-                if operation_ok(finish):
+                with staged_write(udid, source, link_destination, recovered,
+                                  archive_path, books_path, snapshot_root) as cleanup:
+                    atc = run_json(
+                        [os.fspath(AIRTRAFFIC_HOST), udid,
+                         link_identifier, link_destination,
+                         *[part for pair in zip(protected_identifiers, removed_destinations)
+                           for part in pair]],
+                        timeout=120,
+                    )
+                    if atc.get("exitCode") != 0 or not atc.get("ok"):
+                        raise RuntimeError("Could not relocate cache link")
+                    finish = native("finish-moved-removal", udid, source, link_destination,
+                                    recovered, os.fspath(snapshot_root), str(len(leaves)))
+                    removed = operation_ok(finish)
+                    cleanup["done"] = removed
+                if removed:
                     return True
+        except AirliftOperationError:
+            raise
+        except TimeoutError as error:
+            raise AirliftOperationError(str(error) + "; operation stopped") from error
         except Exception:
             pass
         if attempt < retries:

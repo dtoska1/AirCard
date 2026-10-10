@@ -15,6 +15,25 @@ def _ok(extra=None):
 
 
 class ReadFileTests(unittest.TestCase):
+    def setUp(self):
+        preserve = patch.object(apply_card_skin, "preserve_books_snapshot")
+        preserve.start()
+        self.addCleanup(preserve.stop)
+
+    def test_restore_failure_does_not_delete_only_original(self):
+        calls = []
+        def native(command, udid, *args):
+            calls.append(command)
+            if command == "afc-read":
+                Path(args[1]).write_bytes(b"original")
+            return _ok()
+        with patch.object(apply_card_skin, "native", side_effect=native), \
+             patch.object(apply_card_skin, "run_json", return_value={"exitCode": 0, "ok": True}), \
+             patch.object(apply_card_skin, "write_file", return_value=False):
+            self.assertEqual(apply_card_skin.read_file("synthetic", "/var/tmp", "leaf"), b"original")
+        self.assertNotIn("finish-write", calls)
+        self.assertIn("restore-books", calls)
+
     def test_rejects_non_plain_leaf(self) -> None:
         for bad in ("", ".", "..", "a/b", "/abs"):
             with self.assertRaises(ValueError):
