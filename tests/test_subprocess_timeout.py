@@ -14,6 +14,18 @@ OK = {'exitCode': 0, 'targetGatePassed': True, 'operation': {'ok': True}}
 
 
 class StreamingTimeoutTests(unittest.TestCase):
+    def test_cli_cache_recovery_failure_stops_before_next_directory(self):
+        with patch.object(skin, 'remove_files', side_effect=skin.AirliftOperationError('Books restoration uncertain')) as remove:
+            with self.assertRaises(skin.AirliftOperationError):
+                skin.invalidate_cache('synthetic-device', 'A' * 27 + '=')
+        remove.assert_called_once()
+        self.assertTrue(remove.call_args.args[1].endswith('.cache'))
+
+    def test_cli_cache_ordinary_failure_still_checks_both_directories(self):
+        with patch.object(skin, 'remove_files', side_effect=[RuntimeError('ordinary failure'), True]) as remove:
+            self.assertFalse(skin.invalidate_cache('synthetic-device', 'A' * 27 + '='))
+        self.assertEqual(remove.call_count, 2)
+
     def test_silent_and_unterminated_output_obey_deadline(self):
         for program in ('import time; time.sleep(30)',
                         'import os,time; os.write(1,b"partial"); time.sleep(30)',

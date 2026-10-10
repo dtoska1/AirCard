@@ -559,6 +559,10 @@ def invalidate_cache(udid: str, card_hash: str) -> bool:
         cache_dir = wallet_directory(card_hash, ext)
         try:
             all_ok = remove_files(udid, cache_dir, cache_leaves) and all_ok
+        except AirliftOperationError:
+            # Restoration uncertainty must stop the whole CLI, including the
+            # next cache directory and any subsequent card.
+            raise
         except Exception:
             all_ok = False
     return all_ok

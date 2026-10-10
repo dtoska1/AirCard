@@ -1588,7 +1588,7 @@ class AppViewModel: ObservableObject {
                 self.isFlashing = false
                 if didFail {
                     self.statusText = "Failed to apply card skins."
-                    self.errorMessage = "One or more cards could not be updated. Check the log and try again."
+                    self.errorMessage = "One or more cards could not be updated. Check the log before retrying. If Books restoration could not be verified, stop and retain the recovery snapshot."
                     self.log("Skin application stopped after a card update failed.")
                 } else {
                     self.statusText = "Complete! All cards updated."
