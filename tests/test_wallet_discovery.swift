@@ -6,6 +6,12 @@ struct WalletDiscoveryTests {
         let a = String(repeating: "A", count: 27) + "="
         let b = String(repeating: "B", count: 27) + "="
         let c = String(repeating: "C", count: 27) + "="
+        for id in [a, String(repeating: "x", count: 20), String(repeating: "x", count: 64)] {
+            precondition(WalletScanParser.isValidCardID(id))
+        }
+        for id in ["../" + a, a + "/b", a + "\\b", a + "..", a + "\n", "short", String(repeating: "x", count: 65)] {
+            precondition(!WalletScanParser.isValidCardID(id))
+        }
         let line = "Wallet /Cards/\(b).cache/Preview /Cards/\(a).pkpass/en.lproj /Cards/\(b).pkcache/FrontFace"
         precondition(WalletScanParser.cardIDs(in: line) == [b, a])
         precondition(WalletScanParser.cardIDs(in: "passd identifier \(a)").isEmpty)

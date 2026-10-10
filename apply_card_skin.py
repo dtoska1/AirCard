@@ -15,6 +15,7 @@ import tempfile
 import time
 import zipfile
 from pathlib import Path
+from wallet_identity import require_card_id, wallet_directory
 
 ROOT = Path(__file__).resolve().parent
 DEVICE_HELPER = ROOT / "bin" / "device_helper" if (ROOT / "bin" / "device_helper").is_file() else ROOT / "build" / "device_helper"
@@ -554,10 +555,11 @@ def remove_files(udid: str, target: str, leaves: list[str], retries: int = 3) ->
 
 def invalidate_cache(udid: str, card_hash: str) -> bool:
     """Remove every rendered card face so Wallet must rebuild from the pass."""
+    require_card_id(card_hash)
     all_ok = True
     cache_leaves = ["FrontFace", "PlaceHolder", "Preview"]
     for ext in [".cache", ".pkcache"]:
-        cache_dir = f"/var/mobile/Library/Passes/Cards/{card_hash}{ext}"
+        cache_dir = wallet_directory(card_hash, ext)
         try:
             all_ok = remove_files(udid, cache_dir, cache_leaves) and all_ok
         except Exception:
@@ -575,13 +577,13 @@ def main():
         print(f"Error: {img_path} not found")
         sys.exit(1)
     img_data = img_path.read_bytes()
-    hashes = sys.argv[3:]
+    hashes = [require_card_id(value) for value in sys.argv[3:]]
 
     print(f"Loaded image from batter: {len(img_data)} bytes")
     print(f"Targeting {len(hashes)} cards on device {udid}...")
 
     for index, h in enumerate(hashes, 1):
-        target_dir = f"/var/mobile/Library/Passes/Cards/{h}.pkpass"
+        target_dir = wallet_directory(h, ".pkpass")
         print(f"\n[{index}/{len(hashes)}] Processing card: {h}")
 
         print("  -> Writing card artwork (fast batch)...")

@@ -832,6 +832,7 @@ class AppViewModel: ObservableObject {
     }
 
     func recordScannedCard(_ id: String) {
+        guard WalletScanParser.isValidCardID(id) else { return }
         let newlySeen = currentScanIDs.insert(id).inserted
         if let index = cards.firstIndex(where: { $0.id == id }) {
             if !cards[index].confirmed { cards[index].confirmed = true }
@@ -854,7 +855,7 @@ class AppViewModel: ObservableObject {
     }
 
     func recordPreloadedCard(_ id: String) {
-        guard currentPreloadedIDs.insert(id).inserted else { return }
+        guard WalletScanParser.isValidCardID(id), currentPreloadedIDs.insert(id).inserted else { return }
         if let index = cards.firstIndex(where: { $0.id == id }) {
             if !cards[index].confirmed { cards[index].confirmed = true }
         } else {
@@ -910,8 +911,8 @@ class AppViewModel: ObservableObject {
         let components = raw.components(separatedBy: CharacterSet(charactersIn: " \n\r\t,;"))
         var addedCount = 0
         for comp in components {
-            let clean = comp.trimmingCharacters(in: .whitespacesAndNewlines).trimmingCharacters(in: CharacterSet(charactersIn: "."))
-            if clean.count >= 16 && clean.count <= 64 && !cards.contains(where: { $0.id == clean }) {
+            let clean = comp.trimmingCharacters(in: .whitespacesAndNewlines)
+            if WalletScanParser.isValidCardID(clean) && !cards.contains(where: { $0.id == clean }) {
                 cards.append(CardItem(id: clean, isSelected: true, displayName: walletCatalog.name(for: clean), confirmed: true))
                 currentPreloadedIDs.insert(clean)
                 addedCount += 1
@@ -920,7 +921,9 @@ class AppViewModel: ObservableObject {
         }
         if addedCount > 0 {
             saveCards()
-            scannerMessage = "Added \(addedCount) card ID(s) ready for skinning and flashing."
+            scannerMessage = "Added \(addedCount) manually supplied card ID(s). Check the intended card before flashing."
+        } else {
+            scannerMessage = "No new valid IDs. Use 20–64 letters, digits, _, +, = or -; no paths."
         }
     }
     

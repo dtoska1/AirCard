@@ -14,6 +14,7 @@ import sys
 import time
 import zipfile
 from pathlib import Path
+from wallet_identity import require_card_id, wallet_directory
 
 # Augment PATH so bundled tools and system tools are always found
 script_dir = Path(__file__).resolve().parent
@@ -174,6 +175,11 @@ def cmd_prepare_image(src: str, dst: str):
 
 
 def cmd_flash(udid: str, card_hash: str, image_path: str) -> bool:
+    try:
+        require_card_id(card_hash)
+    except ValueError as error:
+        print(json.dumps({"type": "error", "ok": False, "message": str(error)}))
+        return False
     img_path = Path(image_path)
     if not img_path.is_file():
         print(json.dumps({"ok": False, "error": "Image file not found"}))
@@ -190,7 +196,7 @@ def cmd_flash(udid: str, card_hash: str, image_path: str) -> bool:
         sys.stdout.flush()
         return False
 
-    pkpass_dir = f"/var/mobile/Library/Passes/Cards/{card_hash}.pkpass"
+    pkpass_dir = wallet_directory(card_hash, ".pkpass")
 
     # One step per artwork file, then one step for each rendered-cache directory.
     num_assets = len(asset_payloads)
@@ -250,7 +256,7 @@ def cmd_flash(udid: str, card_hash: str, image_path: str) -> bool:
 
     # Wallet only rebuilds a face after the old cache entry is gone.
     for cache_offset, ext in enumerate((".cache", ".pkcache"), start=1):
-        cache_dir = f"/var/mobile/Library/Passes/Cards/{card_hash}{ext}"
+        cache_dir = wallet_directory(card_hash, ext)
         step = num_assets + cache_offset
         print(json.dumps({
             "type": "progress",

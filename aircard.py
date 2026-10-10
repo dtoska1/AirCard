@@ -16,6 +16,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from wallet_identity import valid_card_id, require_card_id, wallet_directory
 
 # Ensure bundled and standard bin paths are in PATH
 script_dir = Path(__file__).resolve().parent
@@ -62,8 +63,8 @@ def load_saved_cards() -> list[str]:
         if store.is_file():
             try:
                 data = json.loads(store.read_text("utf-8"))
-                if isinstance(data, list) and data:
-                    return data
+                if isinstance(data, list):
+                    return list(dict.fromkeys(x for x in data if valid_card_id(x)))
             except Exception:
                 pass
     return list(PREDEFINED_CARDS)
@@ -72,7 +73,7 @@ def load_saved_cards() -> list[str]:
 def save_cards(cards: list[str]):
     """Saves unique card hashes to local storage."""
     try:
-        unique = list(dict.fromkeys(cards))
+        unique = list(dict.fromkeys(require_card_id(x) for x in cards))
         CARDS_STORE_PATH.write_text(json.dumps(unique, indent=2), encoding="utf-8")
     except Exception:
         pass
@@ -257,7 +258,7 @@ def capture_card_hashes(udid: str, existing_cards: list[str] | None = None) -> l
                             "hwAtAmHKYwsQrJbT5cTNDsaxVME=",
                         ]:
                             continue
-                        if h and h not in found_hashes:
+                        if valid_card_id(h) and h not in found_hashes:
                             found_hashes.add(h)
                             print(f"  ✨ Detected card [{len(found_hashes)}]: {h}")
 
@@ -376,7 +377,7 @@ def main():
         hashes = capture_card_hashes(device["udid"], saved_cards)
     elif mode == "3":
         manual = input("Enter card hashes separated by commas or spaces: ").strip()
-        new_items = [x.strip() for x in re.split(r"[\s,;]+", manual) if len(x.strip()) >= 16]
+        new_items = [x.strip() for x in re.split(r"[\s,;]+", manual) if valid_card_id(x.strip())]
         for item in new_items:
             if item not in hashes:
                 hashes.append(item)
@@ -425,7 +426,7 @@ def main():
 
     for idx, h in enumerate(selected_hashes, 1):
         print(f"\n--- [{idx}/{len(selected_hashes)}] Card: {h} ---")
-        pkpass_dir = f"/var/mobile/Library/Passes/Cards/{h}.pkpass"
+        pkpass_dir = wallet_directory(h, ".pkpass")
 
         for asset in TARGET_ASSETS:
             ok = write_file(device["udid"], pkpass_dir, asset, png_bytes)

@@ -47,7 +47,7 @@ struct WalletSavedCard: Codable, Equatable {
     static func unique(_ entries: [WalletSavedCard]) -> [WalletSavedCard] {
         var result: [WalletSavedCard] = []
         var indices: [String: Int] = [:]
-        for entry in entries {
+        for entry in entries where WalletScanParser.isValidCardID(entry.id) {
             if let index = indices[entry.id] {
                 result[index].confirmed = result[index].confirmed || entry.confirmed
                 if result[index].imagePath == nil { result[index].imagePath = entry.imagePath }
@@ -63,6 +63,10 @@ struct WalletSavedCard: Codable, Equatable {
 // A bare base64-like token in a Wallet log is not proof of a card by itself.
 // Prefer structured pass/cache/dashboard paths, with fallback extraction for Wallet events.
 enum WalletScanParser {
+    static func isValidCardID(_ id: String) -> Bool {
+        id.range(of: #"\A[-A-Za-z0-9_+=]{20,64}\z"#, options: .regularExpression) != nil
+    }
+
     static let cardReferences = [
         try! NSRegularExpression(pattern: #"/([-A-Za-z0-9_+=]{20,64})\.(?:pkpass|cache|pkcache)(?=[/\s\"'\),]|$)"#),
         try! NSRegularExpression(pattern: #"/(?:Cards|Passes/Cards)/([-A-Za-z0-9_+=]{20,64})(?=[/\s\"'\),]|$)"#, options: .caseInsensitive),
@@ -105,7 +109,7 @@ enum WalletScanParser {
         candidates.sort { $0.0 < $1.0 }
         var seen = Set<String>()
         return candidates.compactMap { _, id in
-            guard !placeholders.contains(id), seen.insert(id).inserted else { return nil }
+            guard isValidCardID(id), !placeholders.contains(id), seen.insert(id).inserted else { return nil }
             return id
         }
     }
@@ -116,7 +120,7 @@ enum WalletScanParser {
         return fallbackToken.matches(in: line, range: lineRange).compactMap { match in
             guard let range = Range(match.range(at: 1), in: line) else { return nil }
             let id = String(line[range])
-            guard !placeholders.contains(id), seen.insert(id).inserted else { return nil }
+            guard isValidCardID(id), !placeholders.contains(id), seen.insert(id).inserted else { return nil }
             return id
         }
     }

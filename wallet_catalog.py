@@ -7,7 +7,7 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
-CARD_ID = re.compile(r"[-A-Za-z0-9_+=]{20,64}\Z")
+from wallet_identity import CARD_ID
 
 
 def decode_archive(data: bytes):

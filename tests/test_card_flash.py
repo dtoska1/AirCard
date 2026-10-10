@@ -2,6 +2,7 @@ import base64
 import io
 import json
 import subprocess
+import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -12,12 +13,25 @@ import aircard_backend
 import apply_card_skin
 
 
+CARD_ID = "A" * 27 + "="
+
 PNG_1X1 = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
 )
 
 
 class CardFlashTests(unittest.TestCase):
+    def setUp(self):
+        # sips is a macOS integration dependency. Exercise the same asset assembly
+        # on Linux with only that OS command substituted, not the flash logic.
+        if sys.platform != "darwin":
+            def sips(command, **kwargs):
+                Path(command[-1]).write_bytes(b"%PDF-1.4\nsynthetic-test-payload")
+                return subprocess.CompletedProcess(command, 0)
+            mock = patch("card_assets.subprocess.run", side_effect=sips)
+            mock.start()
+            self.addCleanup(mock.stop)
+
     def test_cache_removal_moves_link_and_required_companion_payload(self) -> None:
         successful = {
             "exitCode": 0,
@@ -51,7 +65,7 @@ class CardFlashTests(unittest.TestCase):
                 patch.object(aircard_backend, "remove_files", remove_files),
                 redirect_stdout(io.StringIO()),
             ):
-                result = aircard_backend.cmd_flash("device", "card", str(image_path))
+                result = aircard_backend.cmd_flash("device", CARD_ID, str(image_path))
 
         self.assertTrue(result)
 
@@ -73,7 +87,7 @@ class CardFlashTests(unittest.TestCase):
 
         removals = [call.args for call in remove_files.call_args_list]
         for extension in (".cache", ".pkcache"):
-            self.assertIn(("device", f"/var/mobile/Library/Passes/Cards/card{extension}", list(aircard_backend.CACHE_FILES)), removals)
+            self.assertIn(("device", f"/var/mobile/Library/Passes/Cards/{CARD_ID}{extension}", list(aircard_backend.CACHE_FILES)), removals)
 
     def test_flash_fails_when_wallet_cache_cannot_be_removed(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -85,7 +99,7 @@ class CardFlashTests(unittest.TestCase):
                 patch.object(aircard_backend, "remove_files", side_effect=[True, False]),
                 redirect_stdout(output),
             ):
-                result = aircard_backend.cmd_flash("device", "card", str(image_path))
+                result = aircard_backend.cmd_flash("device", CARD_ID, str(image_path))
         messages = [json.loads(line) for line in output.getvalue().splitlines()]
         self.assertFalse(result)
         self.assertEqual(messages[-1]["type"], "error")
@@ -105,7 +119,7 @@ class CardFlashTests(unittest.TestCase):
                 patch.object(aircard_backend, "remove_files", Mock(return_value=True)),
                 redirect_stdout(output),
             ):
-                result = aircard_backend.cmd_flash("device", "card", str(image_path))
+                result = aircard_backend.cmd_flash("device", CARD_ID, str(image_path))
 
         messages = [json.loads(line) for line in output.getvalue().splitlines()]
         self.assertFalse(result)
@@ -135,7 +149,7 @@ class CardFlashTests(unittest.TestCase):
                 patch.object(aircard_backend, "remove_files", return_value=True),
                 redirect_stdout(output),
             ):
-                result = aircard_backend.cmd_flash("device", "card", str(image_path))
+                result = aircard_backend.cmd_flash("device", CARD_ID, str(image_path))
 
         messages = [json.loads(line) for line in output.getvalue().splitlines()]
         written = [
@@ -159,7 +173,7 @@ class CardFlashTests(unittest.TestCase):
                 patch.object(aircard_backend, "remove_files", return_value=True),
                 redirect_stdout(output),
             ):
-                result = aircard_backend.cmd_flash("device", "card", str(image_path))
+                result = aircard_backend.cmd_flash("device", CARD_ID, str(image_path))
 
         messages = [json.loads(line) for line in output.getvalue().splitlines()]
         fallback = [
@@ -189,7 +203,7 @@ class CardFlashTests(unittest.TestCase):
                 ),
                 redirect_stdout(output),
             ):
-                result = aircard_backend.cmd_flash("device", "card", str(image_path))
+                result = aircard_backend.cmd_flash("device", CARD_ID, str(image_path))
 
         messages = [json.loads(line) for line in output.getvalue().splitlines()]
         self.assertFalse(result)
