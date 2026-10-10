@@ -569,6 +569,20 @@ class AppViewModel: ObservableObject {
     private var pendingActivationIDs: Set<String> = []
     @Published private(set) var isIdentifyingCard = false
     @Published private(set) var identificationMessage = ""
+    @Published private(set) var identificationSignalCounts: [String: Int] = [:]
+    var identificationSignalSummary: String {
+        let pairs: [(String, String)] = [
+            ("selected", "Selected"),
+            ("redacted", "Redacted selection"),
+            ("unrecognized", "Unrecognized selection"),
+            ("inSession", "InSession"),
+            ("global", "Global"),
+            ("dashboard", "Dashboard"),
+            ("activation", "Activation")
+        ]
+        return pairs.map { "\($0.1): \(identificationSignalCounts[$0.0, default: 0])" }
+                    .joined(separator: " · ")
+    }
     @Published private(set) var pendingIdentifiedCardID: String?
     @Published var showCardNamingSheet = false
 
@@ -1236,6 +1250,7 @@ class AppViewModel: ObservableObject {
         if !isScanningCards { startCardScanning() }
         guard isScanningCards else { return }
         isIdentifyingCard = true
+        identificationSignalCounts = [:]
         pendingIdentifiedCardID = nil
         showCardNamingSheet = false
         identificationMessage = "Open ONE card in Wallet now. Waiting for an explicit selected-pass event; global lists do not count."
@@ -1246,6 +1261,12 @@ class AppViewModel: ObservableObject {
         pendingIdentifiedCardID = nil
         showCardNamingSheet = false
         identificationMessage = ""
+    }
+
+    func recordIdentificationEvidence(_ evidence: [String], line: String) {
+        guard isIdentifyingCard, isScanningCards else { return }
+        for kind in evidence { identificationSignalCounts[kind, default: 0] += 1 }
+        if evidence.contains("selected") { observeSelectedPassEvent(line) }
     }
 
     func observeSelectedPassEvent(_ line: String) {
@@ -1418,10 +1439,11 @@ class AppViewModel: ObservableObject {
                                 self.reconcileMatchedPaymentCards()
                             }
                         }
-                        if !WalletScanParser.selectedPassIDs(in: line).isEmpty {
+                        let evidence = WalletScanParser.selectionEvidence(in: line)
+                        if !evidence.isEmpty {
                             await MainActor.run {
                                 guard self.scanProcess === proc else { return }
-                                self.observeSelectedPassEvent(line)
+                                self.recordIdentificationEvidence(evidence, line: line)
                             }
                         }
                     }
@@ -2738,6 +2760,13 @@ struct ContentView: View {
                     .foregroundColor(.blue)
                 Text(vm.isIdentifyingCard ? vm.identificationMessage : "Double-click Side button (Apple Pay), pass Face ID, then tap your card.")
                     .font(.caption2)
+                if vm.isIdentifyingCard {
+                    Text(vm.identificationSignalSummary)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .help("Counts only. No card IDs, device IDs or raw log lines are displayed.")
+                }
                     .foregroundColor(.secondary)
             }
             
