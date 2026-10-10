@@ -25,7 +25,7 @@ for binary in "$APP_DIR/Contents/MacOS/AirCard" \
     codesign -dv --verbose=4 "$binary"
     file "$binary"
     lipo -info "$binary"
-    lipo -verify_arch arm64 x86_64 "$binary"
+    lipo "$binary" -verify_arch arm64 x86_64
     otool -L "$binary"
     for arch in arm64 x86_64; do
         actual="$(otool -arch "$arch" -l "$binary" | awk '/minos/ {print $2; exit} /LC_VERSION_MIN_MACOSX/ {legacy=1} legacy && /version / {print $2; exit}')"
