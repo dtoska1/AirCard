@@ -175,6 +175,108 @@ enum WalletScanParser {
     }
 }
 
+// Opt-in read-only A→B→A correlation. Captured IDs are transient in memory only.
+// This is NOT an identity oracle: background Wallet prefetching can mimic a match.
+struct WalletABACorrelation {
+    enum Step: Int {
+        case idle, firstTarget, switchToExpress, express, switchToTarget, secondTarget, finished
+    }
+
+    private(set) var step: Step = .idle
+    private(set) var phaseIDs: [Set<String>] = [[], [], []]
+    private(set) var eventCounts: [Int] = [0, 0, 0]
+    private(set) var expressGlobalEvents = 0
+    private(set) var dashboardEvents = 0
+
+    var isRunning: Bool {
+        step != .idle && step != .finished
+    }
+    var isCapturing: Bool {
+        step == .firstTarget || step == .express || step == .secondTarget
+    }
+
+    var buttonTitle: String {
+        switch step {
+        case .idle: return "Begin Target A"
+        case .firstTarget: return "End Target A"
+        case .switchToExpress: return "Begin Express B"
+        case .express: return "End Express B"
+        case .switchToTarget: return "Begin Target A Again"
+        case .secondTarget: return "Finish Comparison"
+        case .finished: return "Finished"
+        }
+    }
+
+    var instruction: String {
+        switch step {
+        case .idle:
+            return "Read-only comparison. First open the rarely used card you WANT to skin, not the Express card."
+        case .firstTarget:
+            return "Capturing A1: keep your intended non-Express card open. Then click End Target A."
+        case .switchToExpress:
+            return "Paused. Switch to your Express card B; after it is open, click Begin Express B."
+        case .express:
+            return "Capturing B: keep the Express card open. Then click End Express B."
+        case .switchToTarget:
+            return "Paused. Switch back to the intended card A; after it is open, click Begin Target A Again."
+        case .secondTarget:
+            return "Capturing A2: keep the intended card open. Then click Finish Comparison."
+        case .finished:
+            return "Comparison complete. Overlaps are NOT proof of which card is selected; do not flash from this result."
+        }
+    }
+
+    mutating func begin() {
+        self = Self()
+        step = .firstTarget
+    }
+
+    mutating func advance() {
+        switch step {
+        case .firstTarget: step = .switchToExpress
+        case .switchToExpress: step = .express
+        case .express: step = .switchToTarget
+        case .switchToTarget: step = .secondTarget
+        case .secondTarget: step = .finished
+        case .idle, .finished: break
+        }
+    }
+
+    mutating func cancel() {
+        self = Self()
+    }
+
+    // Accept ONLY context-derived IDs; never bare fallback tokens or activation AIDs.
+    // Prevent unlimited growth if an unexpected stream emits many distinct strings.
+    mutating func observe(line: String, structuredIDs: [String]) {
+        guard isCapturing else { return }
+        let slot: Int
+        switch step {
+        case .firstTarget: slot = 0
+        case .express: slot = 1
+        case .secondTarget: slot = 2
+        default: return
+        }
+        let lower = line.lowercased()
+        if lower.contains("passids[global]") { expressGlobalEvents += 1 }
+        if lower.contains("dashboard loading") { dashboardEvents += 1 }
+        guard !structuredIDs.isEmpty else { return }
+        eventCounts[slot] += 1
+        for id in structuredIDs where WalletScanParser.isValidCardID(id) && !WalletScanParser.placeholders.contains(id) {
+            guard phaseIDs[slot].count < 128 || phaseIDs[slot].contains(id) else { break }
+            phaseIDs[slot].insert(id)
+        }
+    }
+
+    var repeatedInTarget: Set<String> { phaseIDs[0].intersection(phaseIDs[2]) }
+    var targetOnlyCoincidences: Set<String> { repeatedInTarget.subtracting(phaseIDs[1]) }
+
+    var summary: String {
+        let counts = phaseIDs.map { String($0.count) }
+        return "Distinct structured IDs A1/B/A2: \(counts.joined(separator: "/")) · A repeat: \(repeatedInTarget.count) · A repeat absent in B: \(targetOnlyCoincidences.count) · Global events: \(expressGlobalEvents) · Dashboard events: \(dashboardEvents). Unverified correlations only."
+    }
+}
+
 // Normal diagnostic text must not reveal full pass identifiers or device UDIDs.
 enum WalletDiagnostics {
     static func redacted(_ message: String) -> String {
