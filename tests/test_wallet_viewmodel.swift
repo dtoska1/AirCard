@@ -25,8 +25,8 @@ struct WalletViewModelTests {
         precondition(vm.currentVerifiedCards.isEmpty) // A cache alone is not enough.
         vm.recordScannedCard(a)
         vm.recordScannedCard(a)
-        precondition(vm.currentScanIDs == [a] && vm.confirmedCardIDs == [a, b])
-        precondition(vm.currentVerifiedCardIDs == [a, b])
+        precondition(vm.currentScanIDs == [a] && vm.confirmedCardIDs == [a])
+        precondition(vm.currentVerifiedCardIDs == [a])
         precondition(vm.cards.count == 2)
         vm.isScanningCards = false
         let activation = "A00000000310100100000020"
@@ -62,6 +62,24 @@ struct WalletViewModelTests {
         precondition(relaunched.cards.count == countBeforePreload + 1)
         precondition(relaunched.cards.first(where: { $0.id == c })?.confirmed == true)
         precondition(relaunched.currentVerifiedCards.map(\.id) == [c])
+        relaunched.clearAllCards()
+        precondition(relaunched.flashEligibleIDs.isEmpty)
+        relaunched.recordCandidateCard(a)
+        precondition(relaunched.flashEligibleIDs.isEmpty)
+        relaunched.addCardHash(a)
+        precondition(relaunched.flashEligibleIDs == [a])
+        precondition(relaunched.currentVerifiedCardIDs.isEmpty)
+        precondition(relaunched.cards.first?.confirmed == false)
+        relaunched.deleteCard(id: a)
+        precondition(relaunched.flashEligibleIDs.isEmpty)
+        relaunched.addCardHash("../" + b)
+        precondition(relaunched.cards.isEmpty)
+        relaunched.walletCatalog = WalletCatalog(paymentStatus: "matched", payments: [
+            .init(id: a, name: "A", source: "payment", activationID: activation),
+            .init(id: b, name: "B", source: "payment", activationID: activation)
+        ], memberships: [], warnings: [], cacheUpdatedAt: nil)
+        precondition(!relaunched.recordActivatedPaymentCard(activation, refreshIfNeeded: false))
+        precondition(relaunched.flashEligibleIDs.isEmpty)
         print("Wallet view model migration, device isolation, repeat scans, skin identity and clear/relaunch passed")
     }
 }

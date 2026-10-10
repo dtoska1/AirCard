@@ -196,6 +196,7 @@ def capture_card_hashes(udid: str, existing_cards: list[str] | None = None) -> l
 
     found_hashes = set(existing_cards or [])
     initial_count = len(found_hashes)
+    fallback_candidates = set()
 
     try:
         import select
@@ -246,7 +247,7 @@ def capture_card_hashes(udid: str, existing_cards: list[str] | None = None) -> l
                 if not is_ctx:
                     continue
 
-                for r in CARD_REGEXES:
+                for pattern_index, r in enumerate(CARD_REGEXES):
                     m = r.search(line)
                     if m:
                         h = m.group(1).strip().strip("'\"").rstrip(".").rstrip(",")
@@ -259,6 +260,9 @@ def capture_card_hashes(udid: str, existing_cards: list[str] | None = None) -> l
                         ]:
                             continue
                         if valid_card_id(h) and h not in found_hashes:
+                            if pattern_index == 2:
+                                fallback_candidates.add(h)
+                                continue
                             found_hashes.add(h)
                             print(f"  ✨ Detected card [{len(found_hashes)}]: {h}")
 
@@ -268,6 +272,10 @@ def capture_card_hashes(udid: str, existing_cards: list[str] | None = None) -> l
         process.terminate()
         process.wait()
 
+    for candidate in sorted(fallback_candidates - found_hashes):
+        answer = input(f"Unverified Wallet token …{candidate[-6:]}. Approve as your intended card ID? [y/N]: ")
+        if answer.strip().lower() == "y":
+            found_hashes.add(candidate)
     res = list(found_hashes)
     save_cards(res)
     return res

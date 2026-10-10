@@ -558,6 +558,7 @@ class AppViewModel: ObservableObject {
     @Published var scannerMessage = "Open Wallet and scan cards to verify this iPhone's saved entries."
     @Published var currentScanIDs: Set<String> = []
     private var currentPreloadedIDs: Set<String> = []
+    @Published private(set) var manualCardIDs: Set<String> = []
     private var activeCardDeviceID: String?
     private var isLoadingCards = false
     private var catalogRequestID = UUID()
@@ -566,6 +567,7 @@ class AppViewModel: ObservableObject {
 
     var confirmedCardIDs: Set<String> { Set(cards.filter(\.confirmed).map(\.id)) }
     var currentVerifiedCardIDs: Set<String> { currentScanIDs.union(currentPreloadedIDs) }
+    var flashEligibleIDs: Set<String> { currentVerifiedCardIDs.union(manualCardIDs) }
     var currentVerifiedCards: [CardItem] { cards.filter { currentVerifiedCardIDs.contains($0.id) } }
     var pendingPaymentCards: [WalletCachedCard] { walletCatalog.pending(confirmedIDs: confirmedCardIDs, source: "payment") }
     var pendingMembershipCards: [WalletCachedCard] { walletCatalog.pending(confirmedIDs: confirmedCardIDs, source: "membership") }
@@ -769,6 +771,7 @@ class AppViewModel: ObservableObject {
         stopCardScanning()
         saveCards()
         activeCardDeviceID = udid
+        manualCardIDs = []
         catalogRequestID = UUID()
         walletCatalog = .empty
         currentScanIDs = []
@@ -787,7 +790,7 @@ class AppViewModel: ObservableObject {
         let requestID = UUID()
         catalogRequestID = requestID
         isReadingWalletCache = true
-        let request: [String: Any] = ["product": device.product ?? "", "confirmedIDs": Array(confirmedCardIDs)]
+        let request: [String: Any] = ["product": device.product ?? "", "confirmedIDs": Array(currentScanIDs)]
         guard let requestData = try? JSONSerialization.data(withJSONObject: request) else { return }
         let scriptDir = self.scriptDir
         Task.detached {
@@ -872,14 +875,14 @@ class AppViewModel: ObservableObject {
             pendingActivationIDs.insert(normalizedID)
             scannerMessage = isReadingWalletCache
                 ? "Payment card activated. Waiting for Wallet metadata to finish loading…"
-                : "A payment card was activated, but its ID is not available in this Mac's Wallet cache. Use Read Cache and try again."
+                : "Payment activation is missing or ambiguous in the Mac cache. Open the card for a live ID, or explicitly approve the intended ID."
             if refreshIfNeeded && device?.connected == true && !isReadingWalletCache {
                 refreshWalletCatalog()
             }
             return false
         }
         pendingActivationIDs.remove(normalizedID)
-        recordScannedCard(card.id)
+        recordPreloadedCard(card.id)
         if let index = cards.firstIndex(where: { $0.id == card.id }) {
             cards[index].displayName = card.name
         }
@@ -899,41 +902,55 @@ class AppViewModel: ObservableObject {
         guard !currentVerifiedCardIDs.isDisjoint(with: cachedIDs) else { return }
         let missing = walletCatalog.payments.filter { !currentVerifiedCardIDs.contains($0.id) }
         for card in missing {
-            recordPreloadedCard(card.id)
+            recordCandidateCard(card.id)
         }
         if !missing.isEmpty {
-            scannerMessage = "Matched \(walletCatalog.payments.count) payment card(s) to this iPhone. Open membership cards individually if any are missing."
+            scannerMessage = "Cached cards are suggestions. Scan each card or explicitly approve its ID before flashing."
             log("Added \(missing.count) payment card(s) from the device-matched Wallet cache.")
         }
+    }
+
+    func recordCandidateCard(_ id: String) {
+        guard WalletScanParser.isValidCardID(id), !cards.contains(where: { $0.id == id }) else { return }
+        cards.append(CardItem(id: id, isSelected: false, displayName: walletCatalog.name(for: id), confirmed: false))
+        scannerMessage = "Unverified candidate found. Scan the intended card or use an explicit manual override."
+    }
+
+    func approveManualCard(_ id: String) {
+        guard WalletScanParser.isValidCardID(id) else { return }
+        recordCandidateCard(id)
+        manualCardIDs.insert(id)
+        if let index = cards.firstIndex(where: { $0.id == id }) { cards[index].isSelected = true }
+        log("Manual override approved for card …\(id.suffix(6)); not live verified.")
     }
 
     func addCardHash(_ raw: String) {
         let components = raw.components(separatedBy: CharacterSet(charactersIn: " \n\r\t,;"))
         var addedCount = 0
-        for comp in components {
-            let clean = comp.trimmingCharacters(in: .whitespacesAndNewlines)
-            if WalletScanParser.isValidCardID(clean) && !cards.contains(where: { $0.id == clean }) {
-                cards.append(CardItem(id: clean, isSelected: true, displayName: walletCatalog.name(for: clean), confirmed: true))
-                currentPreloadedIDs.insert(clean)
-                addedCount += 1
-                log("Added card: \(clean)")
-            }
+        for id in components where WalletScanParser.isValidCardID(id) {
+            approveManualCard(id)
+            addedCount += 1
         }
-        if addedCount > 0 {
-            saveCards()
-            scannerMessage = "Added \(addedCount) manually supplied card ID(s). Check the intended card before flashing."
-        } else {
-            scannerMessage = "No new valid IDs. Use 20–64 letters, digits, _, +, = or -; no paths."
-        }
+        saveCards()
+        scannerMessage = addedCount > 0
+            ? "Approved \(addedCount) manual ID(s). Check the intended card before flashing."
+            : "No valid IDs. Use 20–64 letters, digits, _, +, = or -; no paths."
     }
-    
+
     func deleteCard(id: String) {
         cards.removeAll { $0.id == id }
+        currentScanIDs.remove(id)
+        currentPreloadedIDs.remove(id)
+        manualCardIDs.remove(id)
         saveCards()
         log("Removed card: \(id)")
     }
     
     func clearAllCards() {
+        currentScanIDs = []
+        currentPreloadedIDs = []
+        manualCardIDs = []
+        pendingActivationIDs = []
         cards.removeAll()
         saveCards()
         log("Cleared all cards.")
@@ -966,7 +983,7 @@ class AppViewModel: ObservableObject {
     
     /// Selected cards with a skin that differs from what was last flashed.
     var cardsNeedingFlash: [CardItem] {
-        cards.filter { $0.isSelected && $0.customImageURL != nil && !isSkinFlashed($0) }
+        cards.filter { flashEligibleIDs.contains($0.id) && $0.isSelected && $0.customImageURL != nil && !isSkinFlashed($0) }
     }
     
     private func markSkinFlashed(udid: String, card: CardItem) {
@@ -1308,14 +1325,19 @@ class AppViewModel: ObservableObject {
                             }
                         }
                         
-                        var candidates = WalletScanParser.cardIDs(in: line)
+                        let structured = WalletScanParser.cardIDs(in: line)
+                        var candidates = structured
                         if candidates.isEmpty {
                             candidates = WalletScanParser.fallbackCardIDs(in: line)
                         }
                         for candidate in candidates {
                             await MainActor.run {
                                 guard self.scanProcess === proc else { return }
-                                self.recordPreloadedCard(candidate)
+                                if structured.isEmpty {
+                                    self.recordCandidateCard(candidate)
+                                } else {
+                                    self.recordScannedCard(candidate)
+                                }
                                 self.reconcileMatchedPaymentCards()
                             }
                         }
@@ -1378,9 +1400,9 @@ class AppViewModel: ObservableObject {
             errorMessage = "No iPhone connected."
             return
         }
-        let allSkinned = cards.filter { $0.isSelected && $0.customImageURL != nil }
+        let allSkinned = cards.filter { flashEligibleIDs.contains($0.id) && $0.isSelected && $0.customImageURL != nil }
         guard !allSkinned.isEmpty else {
-            errorMessage = "Please assign a skin image to at least one selected card."
+            errorMessage = "Scan or explicitly approve the intended card ID, then select it and assign artwork."
             return
         }
         // Only flash changed skins; if nothing changed, re-flash everything selected.
@@ -1885,6 +1907,9 @@ struct WalletCardView: View {
     let cardIndex: Int
     var isFlashed: Bool = false
     var isVerified: Bool = true
+    var isManual: Bool = false
+    var isLive: Bool = false
+    var onApprove: () -> Void = {}
     let onPickImage: () -> Void
     let onClearImage: () -> Void
     let onDelete: () -> Void
@@ -1893,6 +1918,7 @@ struct WalletCardView: View {
     @State private var isHovered = false
     @State private var isTargeted = false
     @State private var copied = false
+    @State private var confirmingOverride = false
     
     var body: some View {
         VStack(spacing: 10) {
@@ -2056,17 +2082,30 @@ struct WalletCardView: View {
                     .lineLimit(2)
                     .help(card.displayName ?? "No matching name in the Mac cache. The card ID is preserved.")
                 if isVerified {
-                    Text("Matched to this iPhone in current scan")
+                    Text(isLive ? "Observed in current iPhone activity" : "Matched via activation and Mac cache")
                         .font(.caption2)
                         .foregroundStyle(.green)
+                } else if isManual {
+                    Text("Manual override · Not live verified")
+                        .font(.caption2).foregroundStyle(.orange)
                 } else if card.confirmed {
-                    Text("Saved on this iPhone")
+                    Text("Saved entry · Scan or approve before flashing")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 } else {
-                    Text("Manually added · Ready to flash")
+                    Text("Unverified candidate · Not ready to flash")
                         .font(.caption2)
                         .foregroundStyle(.orange)
+                }
+                if !isVerified && !isManual {
+                    Button("Use this ID manually…") { confirmingOverride = true }
+                        .font(.caption2)
+                        .confirmationDialog("Approve this unverified card ID?", isPresented: $confirmingOverride) {
+                            Button("Approve manual override") { onApprove() }
+                            Button("Cancel", role: .cancel) {}
+                        } message: {
+                            Text("Confirm ID …\(card.id.suffix(6)) belongs to your intended card. Cached names and log tokens can be stale or unrelated.")
+                        }
                 }
                 if card.customImageURL != nil && card.customImage == nil {
                     Text("Skin file unavailable. Choose the image again.")
@@ -2210,7 +2249,7 @@ struct ContentView: View {
     @State private var isTargetedTheme = false
     
     private var readyToFlashCount: Int {
-        vm.cards.filter { $0.isSelected && $0.customImageURL != nil }.count
+        vm.cards.filter { vm.flashEligibleIDs.contains($0.id) && $0.isSelected && $0.customImageURL != nil }.count
     }
     
     private var changedCount: Int { vm.cardsNeedingFlash.count }
@@ -2270,6 +2309,9 @@ struct ContentView: View {
                                     cardIndex: visibleIndex,
                                     isFlashed: vm.isSkinFlashed(cardItem),
                                     isVerified: vm.currentVerifiedCardIDs.contains(cardID),
+                                    isManual: vm.manualCardIDs.contains(cardID),
+                                    isLive: vm.currentScanIDs.contains(cardID),
+                                    onApprove: { vm.approveManualCard(cardID) },
                                     onPickImage: { openCardImagePicker(for: cardID) },
                                     onClearImage: { vm.clearCardImage(for: cardID) },
                                     onDelete: { vm.deleteCard(id: cardID) },
@@ -4132,9 +4174,9 @@ struct ContentView: View {
     
     private var addCardSheet: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Save Card IDs for Matching")
+            Text("Add Manual Card IDs")
                 .font(.headline)
-            Text("Paste one or more card IDs. Saved IDs remain hidden until the connected iPhone exposes them in a scan.")
+            Text("Only enter IDs you have identified as your intended cards. Approving them enables flashing without live verification. Never enter card numbers or bank credentials.")
                 .font(.caption)
                 .foregroundColor(.secondary)
             
@@ -4154,7 +4196,7 @@ struct ContentView: View {
                 
                 Spacer()
                 
-                Button("Save IDs") {
+                Button("Approve Manual IDs") {
                     vm.addCardHash(vm.manualHashInput)
                     vm.showAddCardSheet = false
                     vm.manualHashInput = ""

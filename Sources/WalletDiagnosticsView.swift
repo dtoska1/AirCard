@@ -48,7 +48,7 @@ struct WalletDiagnosticsView: View {
                 .disabled(vm.isCheckingDevice || vm.isFlashing)
             }
 
-            if vm.isScanningCards && !vm.scannerMessage.isEmpty {
+            if !vm.scannerMessage.isEmpty {
                 Text(vm.scannerMessage)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
@@ -76,7 +76,7 @@ struct WalletDiagnosticsView: View {
                             ForEach(vm.pendingMembershipCards) { card in pendingRow(card) }
                         }
                         if vm.pendingPaymentCards.isEmpty && vm.pendingMembershipCards.isEmpty {
-                            Text("All cached cards on this Mac have been verified.")
+                            Text("No additional cached suggestions. This does not prove every card is present or verified.")
                                 .foregroundStyle(.secondary)
                         }
                     }

@@ -59,6 +59,12 @@ struct WalletDiscoveryTests {
         precondition(catalog.pending(confirmedIDs: [a], source: "membership").map(\.id) == [c])
         precondition(catalog.name(for: a) == "Same bank")
         precondition(catalog.payment(forActivationID: activation)?.id == a)
+        var ambiguous = catalog
+        ambiguous.payments.append(WalletCachedCard(id: b, name: "Other", source: "payment", activationID: activation.lowercased()))
+        precondition(ambiguous.payment(forActivationID: activation) == nil)
+        precondition(catalog.payment(forActivationID: "F0000000000") == nil)
+        precondition(WalletScanParser.fallbackCardIDs(in: "passd " + String(repeating: "A", count: 26) + "/=").isEmpty)
+        precondition(WalletScanParser.cardIDs(in: "selected pass uniqueID: " + String(repeating: "A", count: 70)).isEmpty)
         precondition(catalog.name(for: "missing") == nil)
         // A view reorder must still attach skin B to ID B, never its old offset.
         let skins = Dictionary(uniqueKeysWithValues: restored.map { ($0.id, $0.imagePath) })

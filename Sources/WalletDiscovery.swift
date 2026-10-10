@@ -28,7 +28,10 @@ struct WalletCatalog: Codable {
     }
 
     func payment(forActivationID id: String) -> WalletCachedCard? {
-        payments.first { $0.activationID?.caseInsensitiveCompare(id) == .orderedSame }
+        guard paymentStatus == "matched" else { return nil }
+        let matches = payments.filter { $0.activationID?.caseInsensitiveCompare(id) == .orderedSame }
+        guard Set(matches.map(\.id)).count == 1 else { return nil }
+        return matches.first
     }
 
     func pending(confirmedIDs: Set<String>, source: String) -> [WalletCachedCard] {
@@ -73,7 +76,7 @@ enum WalletScanParser {
         try! NSRegularExpression(pattern: #"PDCardFileManager:\s*writing card\s+([-A-Za-z0-9_+=]{20,64})(?=[\s\"'\),]|$)"#, options: .caseInsensitive),
         try! NSRegularExpression(pattern: #"PDPassLibrary:\s*wrote pass\s+([-A-Za-z0-9_+=]{20,64})(?=[\s\"'\),]|$)"#, options: .caseInsensitive),
         try! NSRegularExpression(pattern: #"VerificationCheck\.([-A-Za-z0-9_+=]{20,64})(?=[\s\"'\),]|$)"#, options: .caseInsensitive),
-        try! NSRegularExpression(pattern: #"selected pass uniqueID\s*:\s*\"?([-A-Za-z0-9_+=]{20,64})\"?"#, options: .caseInsensitive),
+        try! NSRegularExpression(pattern: #"selected pass uniqueID\s*:\s*\"?([-A-Za-z0-9_+=]{20,64})(?=[\s\"\'\),]|$)"#, options: .caseInsensitive),
         try! NSRegularExpression(pattern: #"Dashboard loading[^:]*:\s*for\s+([-A-Za-z0-9_+=]{20,80})(?=[,\s\"'\)]|$)"#, options: .caseInsensitive),
         try! NSRegularExpression(pattern: #"Dashboard loading[^:]*:\s+([-A-Za-z0-9_+=]{20,80})\s+-"#, options: .caseInsensitive),
     ]
