@@ -1,5 +1,15 @@
 import Foundation
 
+// No card IDs or artwork URLs in this result; the probe only checks local Mac files.
+struct WalletArtworkLocalProbe: Decodable {
+    let scope: String
+    let passesChecked: Int
+    let referenceFiles: Int
+    let plausibleUrlFiles: Int
+    let limited: Bool
+    let note: String
+}
+
 struct WalletCachedCard: Codable, Identifiable {
     let id: String
     let name: String
