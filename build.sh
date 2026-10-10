@@ -3,6 +3,25 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
+source "$SCRIPT_DIR/scripts/build_support.sh"
+
+# Fail before make clean: a usable compiler and Python are host prerequisites.
+if [ "$(uname -s)" != "Darwin" ]; then
+    echo "ERROR: Building AirCard requires macOS 14 or later." >&2
+    exit 1
+fi
+if [ "$(sw_vers -productVersion | cut -d. -f1)" -lt 14 ]; then
+    echo "ERROR: Building AirCard requires macOS 14 or later." >&2
+    exit 1
+fi
+for tool in make xcrun xcode-select lipo codesign otool hdiutil sips; do
+    command -v "$tool" >/dev/null || { echo "ERROR: Missing required tool: $tool" >&2; exit 1; }
+done
+xcode-select -p >/dev/null
+xcrun --sdk macosx --show-sdk-path >/dev/null
+xcrun clang --version >/dev/null
+xcrun swiftc --version >/dev/null
+aircard_check_python "$SCRIPT_DIR"
 
 echo "==> [1/6] Building universal helper binaries (device_helper & airtraffic_host)..."
 make clean
@@ -93,43 +112,18 @@ if [ -z "${SWIFT_SDK:-}" ]; then
         SWIFT_SDK="$CLT_SWIFTUI_SDK"
     fi
 fi
-swiftc -sdk "$SWIFT_SDK" -O -parse-as-library -target arm64-apple-macosx14.0 AirCardApp.swift Sources/WalletDiscovery.swift Sources/WalletDiagnosticsView.swift -o build/AirCard_arm64
-swiftc -sdk "$SWIFT_SDK" -O -parse-as-library -target x86_64-apple-macosx14.0 AirCardApp.swift Sources/WalletDiscovery.swift Sources/WalletDiagnosticsView.swift -o build/AirCard_x86_64
+xcrun swiftc -sdk "$SWIFT_SDK" -O -parse-as-library -target arm64-apple-macosx14.0 AirCardApp.swift Sources/WalletDiscovery.swift Sources/WalletDiagnosticsView.swift -o build/AirCard_arm64
+xcrun swiftc -sdk "$SWIFT_SDK" -O -parse-as-library -target x86_64-apple-macosx14.0 AirCardApp.swift Sources/WalletDiscovery.swift Sources/WalletDiagnosticsView.swift -o build/AirCard_x86_64
 lipo -create -output "${MACOS_DIR}/AirCard" build/AirCard_arm64 build/AirCard_x86_64
 chmod +x "${MACOS_DIR}/AirCard"
 
 echo "==> [5/6] Setting permissions and signing ${APP_NAME}.app bundle..."
 chmod -R 755 "$APP_DIR"
-xattr -cr "$APP_DIR" 2>/dev/null || true
-# Ad-hoc by default so anyone can build this. Set CODESIGN_IDENTITY to a
-# Developer ID to ship a build that Gatekeeper will accept after notarising.
+# Preserve extended attributes for inspection. A source build normally has no
+# quarantine attribute; stripping every attribute is not a signing requirement.
 CODESIGN_IDENTITY="${CODESIGN_IDENTITY:--}"
-if [ "$CODESIGN_IDENTITY" = "-" ]; then
-    codesign --force --deep --sign - "$APP_DIR"
-else
-    # Sign inside out. --deep only walks Frameworks and PlugIns, so the helpers
-    # in Resources/bin keep whatever signature they arrived with, and the notary
-    # service rejects the whole bundle over one ad-hoc binary inside it.
-    # Hardened runtime is required before anything can be notarised.
-    for tool in "${BIN_DIR}"/*; do
-        [ -f "$tool" ] || continue
-        codesign --force --options runtime --timestamp \
-            --sign "$CODESIGN_IDENTITY" "$tool"
-    done
-    codesign --force --options runtime --timestamp \
-        --sign "$CODESIGN_IDENTITY" "$APP_DIR"
-    codesign --verify --strict --verbose=1 "$APP_DIR"
-    # Catch an ad-hoc straggler here rather than in a notary rejection. Checking
-    # the bundle alone is not enough: codesign reports the top-level signature
-    # only, and the binaries this is guarding are nested inside Resources.
-    for nested in "$APP_DIR/Contents/MacOS"/* "$BIN_DIR"/*; do
-        [ -f "$nested" ] || continue
-        if codesign -dv "$nested" 2>&1 | grep -q "adhoc"; then
-            echo "ERROR: $nested is still ad-hoc signed" >&2
-            exit 1
-        fi
-    done
-fi
+aircard_check_python "$SCRIPT_DIR/$RESOURCES_DIR"
+aircard_sign_app "$APP_DIR" "$CODESIGN_IDENTITY"
 
 # The plist promise is only worth anything if the binaries agree with it. A
 # helper built without a minimum silently inherits the build machine's macOS.
