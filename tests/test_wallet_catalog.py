@@ -102,6 +102,7 @@ class WalletCatalogTests(unittest.TestCase):
         self.assertEqual(result['paymentStatus'], 'unavailable')
         self.assertNotIn('phoneTotal', result)
         self.assertTrue(result['warnings'])
+        self.assertIn('use Identify Card', ' '.join(result['warnings']))
 
 
 if __name__ == '__main__':
