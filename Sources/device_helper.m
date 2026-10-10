@@ -1151,8 +1151,8 @@ int main(int argc, const char *argv[]) {
             } else if ([command isEqual:@"afc-read"] && argc == 5) {
                 NSString *mediaPath = [NSString stringWithUTF8String:argv[3]];
                 NSString *localOut = [NSString stringWithUTF8String:argv[4]];
-                if (!IsSafeRelativePath(mediaPath)) {
-                    operation = @{ @"ok": @NO, @"error": @"unsafe media path" };
+                if (!GeneratedToken(mediaPath, AIRLIFT_RECOVERED_PREFIX)) {
+                    operation = @{ @"ok": @NO, @"error": @"only generated AirLift recovery files can be read" };
                 } else {
                     NSData *data = AFCReadFileWithLimit(
                         session.afc, mediaPath, 32 * 1024 * 1024);
