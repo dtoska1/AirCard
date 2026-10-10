@@ -2172,6 +2172,11 @@ struct WalletCardView: View {
                     .font(.system(size: 13, weight: .semibold))
                     .lineLimit(2)
                     .help(card.displayName ?? "No matching name in the Mac cache. The card ID is preserved.")
+                if card.customLabel != nil {
+                    Text("Local label · verify on iPhone before flashing")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                }
                 if isVerified {
                     Text(isLive ? "Observed in current iPhone activity" : "Matched via activation and Mac cache")
                         .font(.caption2)
@@ -2338,6 +2343,7 @@ struct ContentView: View {
     @State private var dragKeyStartOffsets: [String: CGPoint] = [:]
     @State private var isTargetedPoster = false
     @State private var isTargetedTheme = false
+    @State private var cardAliasDraft = ""
     
     private var readyToFlashCount: Int {
         vm.cards.filter { vm.flashEligibleIDs.contains($0.id) && $0.isSelected && $0.customImageURL != nil }.count
@@ -2464,6 +2470,9 @@ struct ContentView: View {
         }
         .sheet(isPresented: $vm.showAddCardSheet) {
             addCardSheet
+        }
+        .sheet(isPresented: $vm.showCardNamingSheet) {
+            identifiedCardSheet
         }
         .onAppear {
             if !dontShowSupportOnLaunch {
@@ -2650,6 +2659,20 @@ struct ContentView: View {
             .controlSize(.regular)
             .disabled(vm.device?.connected != true || vm.isCheckingDevice || vm.isFlashing)
             
+            Button(action: { vm.beginCardIdentification() }) {
+                Label(vm.isIdentifyingCard ? "Waiting for Card…" : "Identify Card", systemImage: "creditcard")
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.regular)
+            .disabled(vm.device?.connected != true || vm.isCheckingDevice || vm.isFlashing || vm.isIdentifyingCard)
+            .help("Choose one card on the iPhone, confirm the explicit selection event and save a local nickname")
+
+            if vm.isIdentifyingCard {
+                Button("Cancel Identify") { vm.cancelCardIdentification() }
+                    .buttonStyle(.bordered)
+                    .controlSize(.regular)
+            }
+
             Button(action: { vm.showAddCardSheet = true }) {
                 Label("Save IDs", systemImage: "plus")
             }
@@ -2713,7 +2736,7 @@ struct ContentView: View {
                     .font(.caption)
                     .fontWeight(.bold)
                     .foregroundColor(.blue)
-                Text("Double-click Side button (Apple Pay), pass Face ID, then tap your card.")
+                Text(vm.isIdentifyingCard ? vm.identificationMessage : "Double-click Side button (Apple Pay), pass Face ID, then tap your card.")
                     .font(.caption2)
                     .foregroundColor(.secondary)
             }
@@ -4263,6 +4286,34 @@ struct ContentView: View {
         .frame(width: 440)
     }
     
+    private var identifiedCardSheet: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Name the Card You Just Opened")
+                .font(.headline)
+            Text("Selected-pass event for ID …\(vm.pendingIdentifiedCardID?.suffix(6) ?? ""). This is not bank-verified. Save a name ONLY if you just opened this specific card on your iPhone. Never enter a card number.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            TextField("Friendly label, e.g. Everyday Visa", text: $cardAliasDraft)
+                .textFieldStyle(.roundedBorder)
+            HStack {
+                Button("Not Sure — Cancel") {
+                    vm.cancelCardIdentification()
+                    cardAliasDraft = ""
+                }
+                Spacer()
+                Button("Save Local Label") {
+                    if vm.confirmIdentifiedCardName(cardAliasDraft) { cardAliasDraft = "" }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(cardAliasDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                          cardAliasDraft.count > 60)
+            }
+        }
+        .padding(20)
+        .frame(width: 430)
+        .onAppear { cardAliasDraft = "" }
+    }
+
     private var addCardSheet: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Add Manual Card IDs")
