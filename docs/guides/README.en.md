@@ -46,7 +46,7 @@ This guide was checked against **AirCard v1.2.6** on **2026-10-04**. The upstrea
 
 Open the [official download page](https://github.com/Mak5er/AirCard/releases/latest) and download `AirCard.dmg` under **Assets**. Open it, drag `AirCard.app` into **Applications**, and launch the app.
 
-If macOS blocks the first launch, verify that the file came from the original repository above, then follow the [upstream installation instructions](https://github.com/Mak5er/AirCard/blob/main/README.md#installation).
+If macOS blocks the first launch, verify that the file came from the original repository above, then distinguish a developer/notarization warning from a damaged signature or malware warning using the [Mac validation guide](../PRE_MAC_VALIDATION.md).
 
 ### 2. Connect your iPhone
 

@@ -56,18 +56,11 @@ Wallet setup, detailed troubleshooting, multi-card workflows, theme creation, co
 
 > [!NOTE]
 > **First Launch on macOS (Gatekeeper):**
-> If macOS displays an unidentified developer prompt on first launch:
-> - **Method 1 (UI):** Right-click (or Control-click) `AirCard.app` in Applications ➔ click **Open** ➔ click **Open**.
-> - **Method 2 (Terminal):**
->   ```sh
->   sudo xattr -cr /Applications/AirCard.app
->   ```
+> A valid signature, notarization, and malware detection are different checks. For a reviewed app blocked only because its developer/notarization cannot be verified, use **System Settings → Privacy & Security → Open Anyway** after attempting launch, if macOS offers it. Do not override an actual malware warning or repair a damaged signature by stripping attributes. See [Mac validation](docs/PRE_MAC_VALIDATION.md).
 
 > [!TIP]
-> **macOS Developer Tools / Python Requirement:**
-> AirCard uses macOS native Python 3 (`/usr/bin/python3`). If macOS prompts that Developer Tools are required or if you recently installed/updated Xcode:
-> - Install Command Line Tools: `xcode-select --install`
-> - Accept Xcode license if applicable: `sudo xcodebuild -license accept`
+> **Python / Developer Tools:**
+> Python is not bundled. The GUI chooses the first executable at `/usr/bin/python3`, `/opt/homebrew/bin/python3`, then `/usr/local/bin/python3`. The Apple path may be a Developer Tools launcher; its existence does not prove Python works. Python **3.9+** and the standard library are required. `build.sh` now probes the same selected interpreter and all backend imports before building. Install/select compatible Xcode or Command Line Tools yourself if needed; the build installs nothing. For full Xcode, finish its first-launch component/license setup.
 
 > [!NOTE]
 > **Windows users:** an unofficial Windows port is available at [**AirCard-Windows**](https://github.com/Lumid-Off/AirCard-Windows).
@@ -155,13 +148,23 @@ with the AirCard project.
 
 ## Building from Source
 
+Use macOS **14 or later**, a compatible Apple SDK/toolchain with `xcrun clang` and `xcrun swiftc`, and installed Python 3.9+. Full Xcode is the recommended first-test environment; Command Line Tools may suffice if the SwiftUI SDK and private-framework link inputs are usable. Neither setup has been compiled in this Linux review. Required tools are `make`, `xcode-select`, `lipo`, `codesign`, `otool`, `hdiutil`, and `sips`; `create-dmg` is optional. No third-party Python package is required for the core GUI path.
+
+For this fork:
+
 ```sh
-git clone https://github.com/mak5er/AirCard.git
+git clone --branch hardening https://github.com/dtoska1/AirCard.git
 cd AirCard
-chmod +x build.sh
-./build.sh
+git status --short --branch
+git rev-parse HEAD
+python3 -m unittest discover -s tests -v
+bash build.sh
+bash scripts/verify_mac.sh
 ```
-This builds universal binaries (`arm64` + `x86_64`), bundles dependencies into `build/AirCard.app`, and outputs `build/AirCard.dmg`.
+
+The build targets both `arm64` and `x86_64` with a minimum deployment version of 14.0, creates `build/AirCard.app` and `build/AirCard.dmg`, and defaults to ad-hoc signatures. Python remains an external runtime. The verification script checks signatures, both architecture slices, backend imports, real PNG/PDF preparation, and helper loading without contacting a phone or launching the GUI. Run it again with `/Applications/AirCard.app` as the first argument after copying the app there.
+
+For the first personal test, use the default ad-hoc build. A local build normally has no download quarantine, but inspect the actual attributes; an explicit `spctl` rejection is expected for ad-hoc code. Developer ID signing is optional via `CODESIGN_IDENTITY="Developer ID Application: …" bash build.sh`; this adds hardened runtime and a timestamp. Notarization is a separate step, never performed automatically. See the [complete trace, failure matrix and Mac checklist](docs/PRE_MAC_VALIDATION.md) before any device write.
 
 ---
 

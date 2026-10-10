@@ -1,5 +1,8 @@
 # AirCard hardening review — 10 October 2026
 
+Follow-up: [Final pre-Mac validation](PRE_MAC_VALIDATION.md) records the later runtime trace, recovery fix, build/signing changes, current test results and Mac verification script. The results below describe the original hardening review.
+
+
 Repository: `dtoska1/AirCard`, branch `hardening`.
 Audited baseline: `52ba05dca4bdc590672c19d554701f4438e20338`.
 Implementation reviewed through `c66593ecb5c6ede54b059a27dc99c9a3607fd4f1`.
