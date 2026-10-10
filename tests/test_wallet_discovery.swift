@@ -35,6 +35,11 @@ struct WalletDiscoveryTests {
         precondition(WalletScanParser.cardIDs(in: "VerificationCheck.\(c)") == [c])
         precondition(WalletScanParser.cardIDs(in: "updated selected pass uniqueID: \(b)") == [b])
         precondition(WalletScanParser.cardIDs(in: "updated selected pass uniqueID: <private>").isEmpty)
+        precondition(WalletScanParser.selectedPassIDs(in: "updated selected pass uniqueID: \(b)") == [b])
+        precondition(WalletScanParser.selectedPassIDs(in: "selected pass uniqueID: \"\(a)\"") == [a])
+        precondition(WalletScanParser.selectedPassIDs(in: ios27Line).isEmpty)
+        precondition(WalletScanParser.selectedPassIDs(in: dashboardLine1).isEmpty)
+        precondition(WalletScanParser.selectedPassIDs(in: "selected pass uniqueID: <private>").isEmpty)
         let activation = "A00000000310100100000020"
         let activeLine = "setActivePaymentApplet: x requestedApplet: <NFApplet> { identifier=\(activation) family=0x0 }"
         precondition(WalletScanParser.activationIDs(in: activeLine) == [activation])
@@ -53,6 +58,13 @@ struct WalletDiscoveryTests {
         precondition(unique[1].imagePath == "/skin-a.png" && unique[1].confirmed)
         let restored = try JSONDecoder().decode([WalletSavedCard].self, from: JSONEncoder().encode(unique))
         precondition(restored == unique)
+        var named = restored
+        named[0].customLabel = "Personal card"
+        let namedRoundTrip = try JSONDecoder().decode([WalletSavedCard].self, from: JSONEncoder().encode(named))
+        precondition(namedRoundTrip[0].customLabel == "Personal card")
+        let oldRecord = #"{"id":"AAAAAAAAAAAAAAAAAAAAAAAAAAA=","confirmed":true,"selected":true}"#
+        let decodedOld = try JSONDecoder().decode(WalletSavedCard.self, from: Data(oldRecord.utf8))
+        precondition(decodedOld.customLabel == nil)
         let catalog = WalletCatalog(paymentStatus: "matched", payments: [
             WalletCachedCard(id: a, name: "Same bank", source: "payment", activationID: activation),
             WalletCachedCard(id: b, name: "Same bank", source: "payment")
