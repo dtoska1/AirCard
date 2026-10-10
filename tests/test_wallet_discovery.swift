@@ -40,6 +40,12 @@ struct WalletDiscoveryTests {
         precondition(WalletScanParser.selectedPassIDs(in: ios27Line).isEmpty)
         precondition(WalletScanParser.selectedPassIDs(in: dashboardLine1).isEmpty)
         precondition(WalletScanParser.selectedPassIDs(in: "selected pass uniqueID: <private>").isEmpty)
+        precondition(WalletScanParser.selectionEvidence(in: "nfcd passIDs[global]: {(\"\(a)\")} passIDs[InSession]: {(\"\(b)\")}") == ["inSession", "global"])
+        precondition(WalletScanParser.selectionEvidence(in: "passd updated selected pass uniqueID: \(a)") == ["selected"])
+        precondition(WalletScanParser.selectionEvidence(in: "passd updated selected pass uniqueID: <private>") == ["redacted"])
+        precondition(WalletScanParser.selectionEvidence(in: "passd updated selected pass uniqueID: UNKNOWN") == ["unrecognized"])
+        precondition(WalletScanParser.selectionEvidence(in: "passd something unrelated").isEmpty)
+
         let activation = "A00000000310100100000020"
         let activeLine = "setActivePaymentApplet: x requestedApplet: <NFApplet> { identifier=\(activation) family=0x0 }"
         precondition(WalletScanParser.activationIDs(in: activeLine) == [activation])
