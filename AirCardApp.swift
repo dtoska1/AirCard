@@ -68,6 +68,8 @@ struct CardItem: Identifiable, Hashable {
     /// SHA-256 of the assigned skin file; used to skip cards whose skin is already on the device.
     private(set) var skinSignature: String? = nil
     var displayName: String? = nil
+    // Local nickname supplied by the user, never issuer-verified.
+    var customLabel: String? = nil
     var confirmed: Bool = false
     
     static func signature(of url: URL) -> String? {
@@ -80,7 +82,7 @@ struct CardItem: Identifiable, Hashable {
     }
     
     static func == (lhs: CardItem, rhs: CardItem) -> Bool {
-        lhs.id == rhs.id && lhs.isSelected == rhs.isSelected && lhs.customImageURL == rhs.customImageURL && lhs.displayName == rhs.displayName && lhs.confirmed == rhs.confirmed
+        lhs.id == rhs.id && lhs.isSelected == rhs.isSelected && lhs.customImageURL == rhs.customImageURL && lhs.displayName == rhs.displayName && lhs.customLabel == rhs.customLabel && lhs.confirmed == rhs.confirmed
     }
 }
 
@@ -565,6 +567,10 @@ class AppViewModel: ObservableObject {
     private var catalogRequestID = UUID()
     private var catalogRefreshTask: Task<Void, Never>?
     private var pendingActivationIDs: Set<String> = []
+    @Published private(set) var isIdentifyingCard = false
+    @Published private(set) var identificationMessage = ""
+    @Published private(set) var pendingIdentifiedCardID: String?
+    @Published var showCardNamingSheet = false
 
     var confirmedCardIDs: Set<String> { Set(cards.filter(\.confirmed).map(\.id)) }
     var currentVerifiedCardIDs: Set<String> { currentScanIDs.union(currentPreloadedIDs) }
@@ -753,14 +759,17 @@ class AppViewModel: ObservableObject {
         cards = WalletSavedCard.unique(records).map { record in
             let url = record.imagePath.map { URL(fileURLWithPath: $0) }
             return CardItem(id: record.id, isSelected: record.selected, customImageURL: url,
-                            customImage: url.flatMap { NSImage(contentsOf: $0) }, confirmed: record.confirmed)
+                            customImage: url.flatMap { NSImage(contentsOf: $0) },
+                            displayName: record.customLabel, customLabel: record.customLabel,
+                            confirmed: record.confirmed)
         }
         log("Loaded \(cards.count) saved card(s); \(confirmedCardIDs.count) previously scanned on this iPhone.")
     }
 
     func saveCards() {
         let records = WalletSavedCard.unique(cards.map {
-            WalletSavedCard(id: $0.id, confirmed: $0.confirmed, imagePath: $0.customImageURL?.path, selected: $0.isSelected)
+            WalletSavedCard(id: $0.id, confirmed: $0.confirmed, imagePath: $0.customImageURL?.path,
+                            selected: $0.isSelected, customLabel: $0.customLabel)
         })
         if let data = try? JSONEncoder().encode(records) {
             cardDefaults.set(data, forKey: walletStorageKey)
@@ -778,6 +787,10 @@ class AppViewModel: ObservableObject {
         currentScanIDs = []
         currentPreloadedIDs = []
         pendingActivationIDs = []
+        isIdentifyingCard = false
+        pendingIdentifiedCardID = nil
+        showCardNamingSheet = false
+        identificationMessage = ""
         loadSavedCards()
         saveCards()
     }
@@ -824,7 +837,7 @@ class AppViewModel: ObservableObject {
                 self.walletCatalog = result
                 self.isReadingWalletCache = false
                 for index in self.cards.indices {
-                    let name = result.name(for: self.cards[index].id)
+                    let name = self.cards[index].customLabel ?? result.name(for: self.cards[index].id)
                     if self.cards[index].displayName != name { self.cards[index].displayName = name }
                 }
                 if self.isScanningCards {
@@ -885,7 +898,7 @@ class AppViewModel: ObservableObject {
         pendingActivationIDs.remove(normalizedID)
         recordPreloadedCard(card.id)
         if let index = cards.firstIndex(where: { $0.id == card.id }) {
-            cards[index].displayName = card.name
+            if cards[index].customLabel == nil { cards[index].displayName = card.name }
         }
         scannerMessage = "Detected active card: \(card.name). Open the next card when ready."
         return true
@@ -939,6 +952,7 @@ class AppViewModel: ObservableObject {
     }
 
     func deleteCard(id: String) {
+        if pendingIdentifiedCardID == id { cancelCardIdentification() }
         cards.removeAll { $0.id == id }
         currentScanIDs.remove(id)
         currentPreloadedIDs.remove(id)
@@ -948,6 +962,7 @@ class AppViewModel: ObservableObject {
     }
     
     func clearAllCards() {
+        cancelCardIdentification()
         currentScanIDs = []
         currentPreloadedIDs = []
         manualCardIDs = []
