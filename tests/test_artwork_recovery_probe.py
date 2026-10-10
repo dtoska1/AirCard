@@ -3,6 +3,7 @@ import plistlib
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from artwork_recovery_probe import probe_local_cache
 
@@ -28,6 +29,18 @@ class ArtworkRecoveryProbeTests(unittest.TestCase):
         self.assertEqual(result["referenceFiles"], 0)
         self.assertIn("does not rule out", result["note"])
         self.assertFalse(result["limited"])
+        self.assertEqual(result["status"], "empty")
+
+    def test_missing_and_inaccessible_cache_are_not_reported_as_empty(self):
+        (self.root / "Cards").rmdir()
+        missing = probe_local_cache(self.root)
+        self.assertEqual(missing["status"], "unavailable")
+        outside = self.root / "outside"
+        outside.mkdir()
+        (self.root / "Cards").symlink_to(outside, target_is_directory=True)
+        blocked = probe_local_cache(self.root)
+        self.assertEqual(blocked["status"], "inaccessible")
+        self.assertGreater(blocked["errors"], 0)
 
     def test_plist_and_plain_urls_only_report_counts_without_leaking_tokens(self):
         a = self.pass_dir()
@@ -44,6 +57,7 @@ class ArtworkRecoveryProbeTests(unittest.TestCase):
         self.assertEqual(report["passesChecked"], 2)
         self.assertEqual(report["referenceFiles"], 3)
         self.assertEqual(report["plausibleUrlFiles"], 2)
+        self.assertEqual(report["status"], "complete")
         exported = json.dumps(report)
         self.assertNotIn(token, exported)
         self.assertNotIn("example.invalid", exported)
@@ -60,6 +74,33 @@ class ArtworkRecoveryProbeTests(unittest.TestCase):
         report = probe_local_cache(self.root)
         self.assertEqual(report["passesChecked"], 1)
         self.assertEqual(report["referenceFiles"], 0)
+        self.assertEqual(report["status"], "partial")
+
+    def test_limits_number_of_passes_without_materializing_directory(self):
+        for identifier in (A, B, "C" * 27 + "="):
+            self.pass_dir(identifier)
+        with patch("artwork_recovery_probe.MAX_PASS_FOLDERS", 2):
+            report = probe_local_cache(self.root)
+        self.assertEqual(report["passesChecked"], 2)
+        self.assertTrue(report["limited"])
+        self.assertEqual(report["status"], "partial")
+
+    def test_limits_reference_file_count_and_marks_partial(self):
+        a = self.pass_dir()
+        for index in range(4):
+            (a / ("cardBackgroundCombined%d.urls" % index)).write_text("https://example.invalid/")
+        with patch("artwork_recovery_probe.MAX_PASS_ENTRIES", 2):
+            report = probe_local_cache(self.root)
+        self.assertTrue(report["limited"])
+        self.assertEqual(report["status"], "partial")
+        self.assertLessEqual(report["referenceFiles"], 2)
+
+    def test_malformed_input_is_not_plist_parsed_or_exported(self):
+        a = self.pass_dir()
+        (a / "cardBackgroundCombined@2x.urls").write_bytes(b"bplist00\\xff" * 100)
+        report = probe_local_cache(self.root)
+        self.assertEqual(report["plausibleUrlFiles"], 0)
+        self.assertNotIn("bplist", json.dumps(report))
 
     def test_oversized_file_is_not_interpreted(self):
         a = self.pass_dir()
@@ -67,6 +108,7 @@ class ArtworkRecoveryProbeTests(unittest.TestCase):
         report = probe_local_cache(self.root)
         self.assertEqual(report["referenceFiles"], 1)
         self.assertEqual(report["plausibleUrlFiles"], 0)
+        self.assertEqual(report["status"], "partial")
 
 
 if __name__ == "__main__":
