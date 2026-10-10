@@ -28,6 +28,23 @@ struct WalletViewModelTests {
         precondition(vm.currentScanIDs == [a] && vm.confirmedCardIDs == [a])
         precondition(vm.currentVerifiedCardIDs == [a])
         precondition(vm.cards.count == 2)
+        // Missing Mac cache must not prevent a user-confirmed local nickname.
+        // A global ID list by itself must NEVER identify the card just opened.
+        vm.device = DeviceInfo(
+            udid: "first-phone", name: "Test iPhone", version: "27.0.1",
+            product: "iPhone16,2", language: nil, locale: nil, bold_text: nil,
+            airlift_compatible: nil, airlift_tested: nil, connected: true, error: nil
+        )
+        vm.beginCardIdentification()
+        precondition(vm.isIdentifyingCard)
+        vm.observeSelectedPassEvent("nfcd: passIDs[global]: {(\"\(b)\")}")
+        precondition(vm.isIdentifyingCard && vm.pendingIdentifiedCardID == nil)
+        vm.observeSelectedPassEvent("passd: updated selected pass uniqueID: \(a)")
+        precondition(!vm.isIdentifyingCard && vm.pendingIdentifiedCardID == a && vm.showCardNamingSheet)
+        precondition(!vm.confirmIdentifiedCardName(""))
+        precondition(vm.confirmIdentifiedCardName("Daily Visa"))
+        precondition(vm.cards.first(where: { $0.id == a })?.customLabel == "Daily Visa")
+        precondition(vm.cards.first(where: { $0.id == a })?.isSelected == false)
         vm.isScanningCards = false
         let activation = "A00000000310100100000020"
         precondition(!vm.recordActivatedPaymentCard(activation))
@@ -44,6 +61,8 @@ struct WalletViewModelTests {
         vm.activateCardDevice("first-phone")
         precondition(vm.cards.map(\.id) == [a, b])
         precondition(vm.confirmedCardIDs == [a, b])
+        precondition(vm.cards.first(where: { $0.id == a })?.customLabel == "Daily Visa")
+        precondition(vm.cards.first(where: { $0.id == a })?.displayName == "Daily Visa")
         precondition(vm.cards[0].customImageURL?.path == "/skin-a.png")
         precondition(vm.cards[1].customImageURL?.path == "/skin-b.png")
         vm.flashedSkins = ["first-phone|" + a: "first", "second-phone|" + b: "second"]
