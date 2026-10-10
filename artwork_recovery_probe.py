@@ -1,92 +1,142 @@
-"""Offline, non-mutating check for surviving Wallet artwork URL references.
+"""Offline, non-mutating existence check for local Mac Wallet artwork links.
 
-Scope: local Mac Wallet pass folders only. Never touches an iPhone, downloads
-artwork, exports a tokenized URL or invokes AirLift. A negative result does NOT
-prove that the references are absent from an iPhone's protected pass folder.
+Only the Mac's ~/Library/Passes/Cards is examined. No iPhone helper, AirLift,
+network client, raw URL, card identifier, or artwork bytes are exposed.
+A negative result is INCONCLUSIVE about the iPhone's protected Wallet files.
 """
 from __future__ import annotations
 
 import json
 import os
-import plistlib
 import re
+import stat
 from pathlib import Path
 
 from wallet_identity import CARD_ID
 
-MAX_ENTRIES = 512
+MAX_PASS_FOLDERS = 512
+MAX_CARD_ENTRIES = 4096
+MAX_PASS_ENTRIES = 128
 MAX_REFERENCE_BYTES = 256 * 1024
+
 REFERENCE_NAME = re.compile(r"\AcardBackgroundCombined[A-Za-z0-9@._-]*\.urls\Z")
-URL_SCHEME = re.compile(rb"https?://", re.IGNORECASE)
+DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+FILE_FLAGS = os.O_RDONLY | os.O_NOFOLLOW
+
+# A bounded syntactic hint, not an authenticated URL or proof of artwork.
+URL_MARKERS = (
+    b"https://", b"http://",
+    "https://".encode("utf-16-le"), "http://".encode("utf-16-le"),
+    "https://".encode("utf-16-be"), "http://".encode("utf-16-be"),
+)
 
 
-def contains_url(value, depth=0) -> bool:
-    if depth > 12:
-        return False
-    if isinstance(value, str):
-        return value.startswith(("https://", "http://"))
-    if isinstance(value, (bytes, bytearray)):
-        return bool(URL_SCHEME.search(value))
-    if isinstance(value, dict):
-        return any(contains_url(v, depth + 1) for v in value.values())
-    if isinstance(value, (tuple, list)):
-        return any(contains_url(v, depth + 1) for v in value)
-    return False
+def _open_directory(parent_fd: int, leaf: str) -> int:
+    fd = os.open(leaf, DIR_FLAGS, dir_fd=parent_fd)
+    if not stat.S_ISDIR(os.fstat(fd).st_mode):
+        os.close(fd)
+        raise OSError("Not a directory")
+    return fd
 
 
-def inspect_reference(path: Path) -> bool:
-    # Do not follow symlinks even if a file was replaced after enumeration.
-    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-    with os.fdopen(fd, "rb") as stream:
-        payload = stream.read(MAX_REFERENCE_BYTES + 1)
-    if len(payload) > MAX_REFERENCE_BYTES:
-        return False
+def inspect_reference(parent_fd: int, leaf: str) -> tuple[bool, bool]:
+    """Return (plausible_url, fully_checked); never return URL contents."""
+    fd = os.open(leaf, FILE_FLAGS, dir_fd=parent_fd)
     try:
-        parsed = plistlib.loads(payload)
-    except (ValueError, TypeError, OverflowError, plistlib.InvalidFileException, OSError):
-        parsed = payload
-    return contains_url(parsed)
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return False, False
+        payload = os.read(fd, MAX_REFERENCE_BYTES + 1)
+        if len(payload) > MAX_REFERENCE_BYTES:
+            return False, False
+        lowered = payload.lower()
+        return any(marker in lowered for marker in URL_MARKERS), True
+    finally:
+        os.close(fd)
 
 
 def probe_local_cache(root: Path) -> dict:
-    result = {
+    report = {
         "scope": "Mac-only; no iPhone access",
+        "status": "unavailable",
         "passesChecked": 0,
         "referenceFiles": 0,
         "plausibleUrlFiles": 0,
+        "errors": 0,
         "limited": False,
-        "note": "No artwork is downloaded or restored. An empty result does not rule out surviving references on the iPhone.",
+        "note": "URL counts are only hints. Empty or unavailable Mac cache does not rule out references on the iPhone.",
     }
-    cards_root = root / "Cards"
-    if cards_root.is_symlink() or not cards_root.is_dir():
-        return result
+
     try:
-        directories = sorted(cards_root.iterdir(), key=lambda p: p.name)
+        root_fd = os.open(root, DIR_FLAGS)
+    except FileNotFoundError:
+        return report
     except OSError:
-        return result
-    for entry in directories:
-        if result["passesChecked"] >= MAX_ENTRIES:
-            result["limited"] = True
-            break
-        if entry.is_symlink() or entry.suffix != ".pkpass" or not CARD_ID.fullmatch(entry.stem):
-            continue
-        if not entry.is_dir():
-            continue
-        result["passesChecked"] += 1
+        report["status"] = "inaccessible"
+        report["errors"] += 1
+        return report
+
+    try:
         try:
-            leaves = sorted(entry.iterdir(), key=lambda p: p.name)
+            cards_fd = _open_directory(root_fd, "Cards")
+        except FileNotFoundError:
+            return report
         except OSError:
-            continue
-        for leaf in leaves:
-            if not REFERENCE_NAME.fullmatch(leaf.name) or leaf.is_symlink() or not leaf.is_file():
-                continue
-            result["referenceFiles"] += 1
+            report["status"] = "inaccessible"
+            report["errors"] += 1
+            return report
+
+        try:
+            report["status"] = "empty"
             try:
-                if inspect_reference(leaf):
-                    result["plausibleUrlFiles"] += 1
+                with os.scandir(cards_fd) as entries:
+                    for index, entry in enumerate(entries):
+                        if index >= MAX_CARD_ENTRIES or report["passesChecked"] >= MAX_PASS_FOLDERS:
+                            report["limited"] = True
+                            break
+                        if not entry.name.endswith(".pkpass"):
+                            continue
+                        identifier = entry.name[:-len(".pkpass")]
+                        if CARD_ID.fullmatch(identifier) is None:
+                            continue
+                        try:
+                            pass_fd = _open_directory(cards_fd, entry.name)
+                        except OSError:
+                            report["errors"] += 1
+                            continue
+                        try:
+                            report["passesChecked"] += 1
+                            with os.scandir(pass_fd) as leaves:
+                                for leaf_index, leaf in enumerate(leaves):
+                                    if leaf_index >= MAX_PASS_ENTRIES:
+                                        report["limited"] = True
+                                        break
+                                    if REFERENCE_NAME.fullmatch(leaf.name) is None:
+                                        continue
+                                    report["referenceFiles"] += 1
+                                    try:
+                                        plausible, complete = inspect_reference(pass_fd, leaf.name)
+                                        if plausible:
+                                            report["plausibleUrlFiles"] += 1
+                                        if not complete:
+                                            report["errors"] += 1
+                                    except OSError:
+                                        report["errors"] += 1
+                        except OSError:
+                            report["errors"] += 1
+                        finally:
+                            os.close(pass_fd)
             except OSError:
-                continue
-    return result
+                report["errors"] += 1
+        finally:
+            os.close(cards_fd)
+    finally:
+        os.close(root_fd)
+
+    if report["limited"] or report["errors"]:
+        report["status"] = "partial"
+    elif report["passesChecked"]:
+        report["status"] = "complete"
+    return report
 
 
 def main() -> None:
