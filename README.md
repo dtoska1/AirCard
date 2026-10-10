@@ -129,6 +129,39 @@ The app deliberately does not guess which of several global pass IDs was
 opened. This workflow has not yet been compiled or tested on real iOS 27.0.1
 hardware. Rebuild the `hardening` branch and run its Mac tests before using it.
 
+### Experimental A → Express B → A comparison (read-only)
+
+If the Mac payment cache is absent and iOS redacts the currently selected pass
+ID, **Identify Card** may remain waiting indefinitely. The optional
+**A/B/A Study** tool compares structured Wallet events in three explicitly
+separated capture windows, without writing anything to the phone.
+
+**For this iPhone setup, A means the rarely used card you actually want to
+reskin; B means the already-working Express card, only as a control.** Being
+listed by `passIDs[global]` does **not** identify B as the selected card.
+
+1. Open the **target card A** in Wallet, then click **A/B/A Study**. The app
+   deselects all cards and starts read-only scanning if needed.
+2. Leave A open for a short capture window, then click **End Target A**.
+3. While the study is **paused**, switch to the **Express card B**. Once it is
+   fully open, click **Begin Express B**. Capture briefly and end B.
+4. While paused, switch back to **target card A**, click **Begin Target A Again**,
+   capture briefly, and click **Finish Comparison**.
+5. Compare the anonymous unique-ID counts and overlap counts. **An ID repeating
+   during A but absent from B is an unverified coincidence, NOT proof that it
+   belongs to A.** Wallet may preload several passes regardless of selection.
+
+The diagnostic uses in-memory sets of context-derived IDs and shows **counts
+only** (no full identifiers, card details or raw log export). It does not
+rename/approve/select cards, and disables flashing while the experiment is
+running. The scanner stops when comparison finishes. Close the panel to discard
+the temporary results. If all stages show the same IDs, the logs cannot
+distinguish the cards and no assignment should be inferred.
+
+This experimental change requires a fresh local Mac build and testing; it has
+not been validated with a real iPhone 15 Pro Max on iOS 27.0.1. Do not use its
+results alone to authorize an artwork write.
+
 ### If scanning finds no cards
 
 The scanner uses the iPhone's unified log service, including Info/Debug events.
