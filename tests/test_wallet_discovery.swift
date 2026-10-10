@@ -74,10 +74,18 @@ struct WalletDiscoveryTests {
         precondition(correlation.phaseIDs[2] == Set([a, c]))
         precondition(correlation.repeatedInTarget == Set([a, c]))
         precondition(correlation.targetOnlyCoincidences == Set([a]))
+        precondition(correlation.pattern(for: a) == .repeatedTargetOnly)
+        precondition(correlation.pattern(for: b) == .expressWindowOnly)
+        precondition(correlation.pattern(for: c) == .ambiguous)
+        precondition(correlation.unverifiedHint(for: a)?.contains("UNVERIFIED") == true)
+        precondition(correlation.unverifiedHint(for: b)?.contains("UNVERIFIED") == true)
+        precondition(correlation.unverifiedHint(for: "DDDDDDDDDDDDDDDDDDDDDDDDDDDD") == nil)
         precondition(correlation.expressGlobalEvents == 1)
         precondition(!correlation.summary.contains(a)) // never show full identifiers
         correlation.cancel()
         precondition(correlation.step == .idle && correlation.phaseIDs.allSatisfy(\.isEmpty))
+        precondition(correlation.pattern(for: a) == nil)
+        precondition(correlation.unverifiedHint(for: a) == nil)
 
         let activation = "A00000000310100100000020"
         let activeLine = "setActivePaymentApplet: x requestedApplet: <NFApplet> { identifier=\(activation) family=0x0 }"
