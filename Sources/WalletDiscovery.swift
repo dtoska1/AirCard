@@ -46,6 +46,8 @@ struct WalletSavedCard: Codable, Equatable {
     var confirmed: Bool = false
     var imagePath: String? = nil
     var selected: Bool = true
+    // User-supplied alias for a specific pass ID, never bank-verified metadata.
+    var customLabel: String? = nil
 
     static func unique(_ entries: [WalletSavedCard]) -> [WalletSavedCard] {
         var result: [WalletSavedCard] = []
@@ -54,6 +56,7 @@ struct WalletSavedCard: Codable, Equatable {
             if let index = indices[entry.id] {
                 result[index].confirmed = result[index].confirmed || entry.confirmed
                 if result[index].imagePath == nil { result[index].imagePath = entry.imagePath }
+                if result[index].customLabel == nil { result[index].customLabel = entry.customLabel }
             } else {
                 indices[entry.id] = result.count
                 result.append(entry)
@@ -85,6 +88,21 @@ enum WalletScanParser {
         options: .caseInsensitive
     )
     static let cardID = try! NSRegularExpression(pattern: #"(?<![-A-Za-z0-9_+=])[-A-Za-z0-9_+=]{20,64}(?![-A-Za-z0-9_+=])"#)
+    // A dedicated selection signal. Do NOT treat passIDs[global], Dashboard
+    // preloads or bare fallback tokens as evidence of one chosen card.
+    static let selectedPass = try! NSRegularExpression(
+        pattern: #"(?:updated\s+)?selected pass uniqueID\s*:\s*"?([-A-Za-z0-9_+=]{20,64})(?=[\s"'\),]|$)"#,
+        options: .caseInsensitive
+    )
+    static func selectedPassIDs(in line: String) -> [String] {
+        var seen = Set<String>()
+        return selectedPass.matches(in: line, range: NSRange(line.startIndex..., in: line)).compactMap { match in
+            guard let range = Range(match.range(at: 1), in: line) else { return nil }
+            let id = String(line[range])
+            guard isValidCardID(id), !placeholders.contains(id), seen.insert(id).inserted else { return nil }
+            return id
+        }
+    }
     static let activation = try! NSRegularExpression(
         pattern: #"setActivePaymentApplet.{0,4096}?requestedApplet\s*:.{0,4096}?(?:identifier\s*=\s*|\"identifier\"\s*:\s*\")([A-Fa-f0-9]{10,64})\b"#,
         options: [.caseInsensitive, .dotMatchesLineSeparators]
