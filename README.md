@@ -147,15 +147,19 @@ listed by `passIDs[global]` does **not** identify B as the selected card.
    fully open, click **Begin Express B**. Capture briefly and end B.
 4. While paused, switch back to **target card A**, click **Begin Target A Again**,
    capture briefly, and click **Finish Comparison**.
-5. Compare the anonymous unique-ID counts and overlap counts. **An ID repeating
-   during A but absent from B is an unverified coincidence, NOT proof that it
-   belongs to A.** Wallet may preload several passes regardless of selection.
+5. Review the *temporary* orange labels on the matching card rows:
+   **Possible target A** means the ID appeared in both target windows but not B;
+   **B-window only** means it appeared during B but not either A window;
+   **Mixed/background** means the pattern was ambiguous. All three are
+   **UNVERIFIED**, even if only one row matches. A repeated A-only event can be
+   unrelated prefetching and does not prove which Wallet card is selected.
 
 The diagnostic uses in-memory sets of context-derived IDs and shows **counts
 only** (no full identifiers, card details or raw log export). It does not
-rename/approve/select cards, and disables flashing while the experiment is
-running. The scanner stops when comparison finishes. Close the panel to discard
-the temporary results. If all stages show the same IDs, the logs cannot
+rename/approve/select cards, and keeps flashing and manual selection
+disabled while the study panel is visible, even after it finishes. The scanner
+stops when comparison finishes. Close the panel to discard all temporary
+results and labels. If all stages show the same IDs, the logs cannot
 distinguish the cards and no assignment should be inferred.
 
 This experimental change requires a fresh local Mac build and testing; it has
