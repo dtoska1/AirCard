@@ -104,8 +104,10 @@ def build_catalog(root: Path, confirmed_ids: list[str], product: str) -> dict:
             result["paymentStatus"] = "unmatched"
             result["warnings"].append("Scan a payment card on the connected iPhone to match its cache. A missing match can also mean the Mac cache is unavailable or out of date.")
         result["cacheUpdatedAt"] = datetime.fromtimestamp(archive_path.stat().st_mtime, timezone.utc).isoformat()
+    except FileNotFoundError:
+        result["warnings"].append("This Mac has no Wallet payment cache. Live scanning still works; use Identify Card to name one explicitly selected card.")
     except (OSError, ValueError, KeyError, TypeError, IndexError, OverflowError, RecursionError, plistlib.InvalidFileException):
-        result["warnings"].append("Payment cache could not be read. Scanning still works; reconnect the iPhone and use Read Cache to retry.")
+        result["warnings"].append("Payment cache could not be decoded. Live scanning still works; use Identify Card or retry Read Cache.")
 
     try:
         entries = list((root / "Cards").iterdir())
