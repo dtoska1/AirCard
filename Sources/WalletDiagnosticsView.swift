@@ -15,7 +15,7 @@ struct WalletDiagnosticsView: View {
             return "Scanning iPhone Wallet…"
         }
         if matched > 0 {
-            return unverified > 0 ? "\(matched) matched · \(unverified) without live verification" : "\(matched) card(s) matched"
+            return unverified > 0 ? "\(matched) verified this scan · \(unverified) not verified" : "\(matched) card(s) verified this scan"
         }
         return "No cards detected. Tap 'Scan Cards' to begin."
     }
