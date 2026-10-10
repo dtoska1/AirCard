@@ -1266,6 +1266,11 @@ class AppViewModel: ObservableObject {
         if correlation.step == .finished { stopCardScanning() }
     }
 
+    func recordABACorrelationLine(_ line: String, structuredIDs: [String]) {
+        guard isScanningCards, correlation.isCapturing else { return }
+        correlation.observe(line: line, structuredIDs: structuredIDs)
+    }
+
     func cancelABACorrelation() { correlation.cancel() }
 
     // Start after the user is ready to open exactly one card on this phone.
@@ -1468,9 +1473,7 @@ class AppViewModel: ObservableObject {
                         if !structured.isEmpty {
                             await MainActor.run {
                                 guard self.scanProcess === proc else { return }
-                                if self.correlation.isCapturing {
-                                    self.correlation.observe(line: line, structuredIDs: structured)
-                                }
+                                self.recordABACorrelationLine(line, structuredIDs: structured)
                             }
                         }
                         let evidence = WalletScanParser.selectionEvidence(in: line)
