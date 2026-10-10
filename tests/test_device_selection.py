@@ -55,6 +55,17 @@ class DeviceSelectionTests(unittest.TestCase):
         self.assertEqual(unpaired["product"], "")
 
     @patch("aircard.list_devices", return_value=MOCK_RAW_DEVICES)
+    def test_explicit_missing_device_never_substitutes_another(self, mock_list):
+        self.assertIsNone(get_connected_device("synthetic-missing-device"))
+        import io
+        from contextlib import redirect_stdout
+        with patch.object(aircard_backend, "find_device_helper", return_value="helper"), \
+             patch.object(aircard_backend, "native") as native, redirect_stdout(io.StringIO()) as output:
+            aircard_backend.cmd_devices("synthetic-missing-device")
+        native.assert_not_called()
+        self.assertEqual(json.loads(output.getvalue())["error"], "selected_device_missing")
+
+    @patch("aircard.list_devices", return_value=MOCK_RAW_DEVICES)
     def test_get_all_connected_devices(self, mock_list):
         devices = get_all_connected_devices()
         self.assertEqual(len(devices), 4)

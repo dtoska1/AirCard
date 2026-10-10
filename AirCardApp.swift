@@ -23,6 +23,7 @@ struct DeviceInfo: Codable, Identifiable, Hashable {
     var locale: String?
     var bold_text: Bool?
     var airlift_compatible: Bool?
+    var airlift_tested: Bool?
     var connected: Bool
     var error: String?
 
@@ -605,7 +606,7 @@ class AppViewModel: ObservableObject {
             self.scriptDir = Bundle.main.bundleURL.deletingLastPathComponent().path
         }
         
-        flashedSkins = UserDefaults.standard.dictionary(forKey: flashedSkinsKey) as? [String: String] ?? [:]
+        flashedSkins = cardDefaults.dictionary(forKey: flashedSkinsKey) as? [String: String] ?? [:]
         loadSavedCards()
         if connectOnLaunch { checkDevice() }
     }
@@ -614,7 +615,7 @@ class AppViewModel: ObservableObject {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm:ss"
         let timestamp = formatter.string(from: Date())
-        logs.append("[\(timestamp)] \(message)")
+        logs.append("[\(timestamp)] \(WalletDiagnostics.redacted(message))")
     }
     
     nonisolated private static var pythonExecutableURL: URL {
@@ -952,6 +953,10 @@ class AppViewModel: ObservableObject {
         manualCardIDs = []
         pendingActivationIDs = []
         cards.removeAll()
+        if let id = activeCardDeviceID {
+            flashedSkins = flashedSkins.filter { !$0.key.hasPrefix(id + "|") }
+            cardDefaults.set(flashedSkins, forKey: flashedSkinsKey)
+        }
         saveCards()
         log("Cleared all cards.")
     }
@@ -989,7 +994,7 @@ class AppViewModel: ObservableObject {
     private func markSkinFlashed(udid: String, card: CardItem) {
         guard let sig = card.skinSignature else { return }
         flashedSkins[flashedKey(udid: udid, cardId: card.id)] = sig
-        UserDefaults.standard.set(flashedSkins, forKey: flashedSkinsKey)
+        cardDefaults.set(flashedSkins, forKey: flashedSkinsKey)
     }
     
     // MARK: - Device Connection
@@ -1066,7 +1071,7 @@ class AppViewModel: ObservableObject {
                             self.statusText = "Connected to \(activeDev.name ?? "iPhone")"
                             self.log("Device connected: \(activeDev.name ?? "iPhone") (\(activeDev.product ?? ""), iOS \(activeDev.version ?? "")) [Total: \(allDevs.count)]")
                             self.applyDevicePreferences(from: activeDev)
-                        } else if let first = allDevs.first(where: { $0.isPaired }) ?? allDevs.first {
+                        } else if resp.error != "selected_device_missing", let first = allDevs.first(where: { $0.isPaired }) ?? allDevs.first {
                             self.activateCardDevice(first.udid)
                             self.device = first
                             self.refreshWalletCatalog()
@@ -1081,7 +1086,10 @@ class AppViewModel: ObservableObject {
                             self.activateCardDevice(nil)
                             self.device = nil
                             self.refreshWalletCatalog()
-                            if resp.error == "device_helper_missing" {
+                            if resp.error == "selected_device_missing" {
+                                self.statusText = "Selected iPhone disconnected. Choose a device explicitly."
+                                self.scannerMessage = "No device was substituted. Reconnect your iPhone or choose one from the device menu."
+                            } else if resp.error == "device_helper_missing" {
                                 self.scannerMessage = "Device tools are missing. Rebuild or reinstall AirCard, then reconnect."
                                 self.statusText = "Device tools are missing from this build."
                                 self.log("Bundled device_helper not found — detection cannot run.")
@@ -1146,9 +1154,9 @@ class AppViewModel: ObservableObject {
                             self.scannerMessage = "Device check failed. Reconnect and unlock the iPhone, then retry."
                         }
                         if !errRaw.isEmpty {
-                            self.log("Backend stderr: \(errRaw)")
+                            self.log("Backend emitted diagnostics (\(errRaw.utf8.count) bytes withheld).")
                         }
-                        self.log("Device detection returned nothing usable: \(raw.isEmpty ? "(no stdout)" : raw.prefix(400).description)")
+                        self.log("Device detection returned no usable result; raw output withheld.")
                     }
                 }
             } catch {
@@ -1167,6 +1175,9 @@ class AppViewModel: ObservableObject {
     }
     
     func applyDevicePreferences(from dev: DeviceInfo) {
+        if dev.airlift_compatible == true && dev.airlift_tested != true {
+            log("This iOS build is allowed but untested by the helper compatibility table. Connection does not prove artwork writes will work.")
+        }
         // 1. Auto-detect TelephonyUI version based on iOS major version
         if let verStr = dev.version, let major = Int(verStr.components(separatedBy: ".").first ?? "") {
             if major >= 18 {
@@ -1400,6 +1411,11 @@ class AppViewModel: ObservableObject {
             errorMessage = "No iPhone connected."
             return
         }
+        let requested = cards.filter { $0.isSelected && $0.customImageURL != nil }
+        guard requested.allSatisfy({ flashEligibleIDs.contains($0.id) }) else {
+            errorMessage = "Some selected cards are unverified. Scan or explicitly approve each intended ID before flashing."
+            return
+        }
         let allSkinned = cards.filter { flashEligibleIDs.contains($0.id) && $0.isSelected && $0.customImageURL != nil }
         guard !allSkinned.isEmpty else {
             errorMessage = "Scan or explicitly approve the intended card ID, then select it and assign artwork."
@@ -1482,7 +1498,7 @@ class AppViewModel: ObservableObject {
                     let data = h.availableData
                     if !data.isEmpty, let text = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
                         Task { @MainActor in
-                            self.log("  [err] \(text)")
+                            self.log("Backend diagnostics withheld (\(text.utf8.count) bytes).")
                         }
                     }
                 }
@@ -1682,7 +1698,7 @@ class AppViewModel: ObservableObject {
                 let data = h.availableData
                 if !data.isEmpty, let text = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
                     Task { @MainActor in
-                        self.log("  [err] \(text)")
+                        self.log("Backend diagnostics withheld (\(text.utf8.count) bytes).")
                     }
                 }
             }

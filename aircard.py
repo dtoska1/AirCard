@@ -158,6 +158,7 @@ def get_connected_device(target_udid: str | None = None) -> dict | None:
         for d in devices:
             if d["udid"] == target_udid:
                 return d
+        return None
     paired = [d for d in devices if d.get("product")]
     return paired[0] if paired else devices[0]
 
@@ -264,7 +265,7 @@ def capture_card_hashes(udid: str, existing_cards: list[str] | None = None) -> l
                                 fallback_candidates.add(h)
                                 continue
                             found_hashes.add(h)
-                            print(f"  ✨ Detected card [{len(found_hashes)}]: {h}")
+                            print(f"  ✨ Detected card [{len(found_hashes)}]: …{h[-6:]}")
 
     except KeyboardInterrupt:
         pass
@@ -339,7 +340,7 @@ def main():
     if target_udid:
         device = get_connected_device(target_udid)
         if not device:
-            print(f"❌ Specified device UDID {target_udid} not found among connected devices.")
+            print(f"❌ Specified device identifier …{target_udid[-6:]} not found among connected devices.")
             sys.exit(1)
     elif len(devices) == 1:
         device = devices[0]
@@ -347,7 +348,7 @@ def main():
         print(f"\n📱 Found {len(devices)} connected device(s):")
         for idx, d in enumerate(devices, 1):
             prod_str = f" ({d['product']}, iOS {d['version']})" if d.get("product") else " (Locked/Unpaired)"
-            print(f"  [{idx}] {d['name']}{prod_str} — UDID: {d['udid']}")
+            print(f"  [{idx}] {d['name']}{prod_str} — UDID: …{d['udid'][-6:]}")
 
         while not device:
             choice = input(f"\nSelect device [1-{len(devices)}, default 1]: ").strip()
@@ -360,7 +361,7 @@ def main():
             print("Invalid choice, please try again.")
 
     print(f"\n✅ Selected: {device['name']} ({device.get('product') or 'Device'}, iOS {device.get('version') or '?'})")
-    print(f"   UDID: {device['udid']}")
+    print(f"   UDID: …{device['udid'][-6:]}")
 
     # 2. Check airlift compatibility
     probe = native("probe", device["udid"])
@@ -372,7 +373,7 @@ def main():
     saved_cards = load_saved_cards()
     print(f"\n[2/5] Saved cards: {len(saved_cards)}")
     for idx, h in enumerate(saved_cards, 1):
-        print(f"  [{idx}] {h}")
+        print(f"  [{idx}] …{h[-6:]}")
 
     print("\nChoose an action:")
     print("  1 - Use existing cards")
@@ -397,7 +398,7 @@ def main():
 
     print(f"\n[3/5] Ready to flash cards ({len(hashes)}):")
     for i, h in enumerate(hashes, 1):
-        print(f"  [{i}] {h}")
+        print(f"  [{i}] …{h[-6:]}")
 
     print("\nSelect cards to customize:")
     print("  'all' - apply to all cards")
@@ -433,7 +434,7 @@ def main():
     print(f"\n[5/5] Flashing skin to selected cards ({len(selected_hashes)})...")
 
     for idx, h in enumerate(selected_hashes, 1):
-        print(f"\n--- [{idx}/{len(selected_hashes)}] Card: {h} ---")
+        print(f"\n--- [{idx}/{len(selected_hashes)}] Card: …{h[-6:]} ---")
         pkpass_dir = wallet_directory(h, ".pkpass")
 
         for asset in TARGET_ASSETS:

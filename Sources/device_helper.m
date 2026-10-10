@@ -998,6 +998,8 @@ static NSDictionary *FinishWrite(DeviceSession *session, NSArray<NSString *> *ar
     NSString *linkDestination = args[1];
     NSString *recovered = args[2];
     NSString *snapshotRoot = args[3];
+    if (!GeneratedNamesMatch(source, linkDestination, recovered) || !LoadBooksSnapshot(snapshotRoot))
+        return @{ @"ok": @NO, @"error": @"invalid generated names or Books snapshot" };
     NSMutableArray<NSString *> *failures = NSMutableArray.array;
 
     if (!RemoveIfPresent(session->afc, linkDestination))

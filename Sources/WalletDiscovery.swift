@@ -135,3 +135,18 @@ enum WalletScanParser {
         }
     }
 }
+
+// Normal diagnostic text must not reveal full pass identifiers or device UDIDs.
+enum WalletDiagnostics {
+    static func redacted(_ message: String) -> String {
+        let pattern = #"(?<![-A-Za-z0-9_+=])[-A-Za-z0-9_+=]{20,}(?![-A-Za-z0-9_+=])"#
+        let regex = try! NSRegularExpression(pattern: pattern)
+        var result = message
+        for match in regex.matches(in: message, range: NSRange(message.startIndex..., in: message)).reversed() {
+            if let range = Range(match.range, in: result) {
+                result.replaceSubrange(range, with: "[identifier hidden]")
+            }
+        }
+        return result
+    }
+}

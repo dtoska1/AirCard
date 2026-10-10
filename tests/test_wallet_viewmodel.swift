@@ -46,7 +46,13 @@ struct WalletViewModelTests {
         precondition(vm.confirmedCardIDs == [a, b])
         precondition(vm.cards[0].customImageURL?.path == "/skin-a.png")
         precondition(vm.cards[1].customImageURL?.path == "/skin-b.png")
+        vm.flashedSkins = ["first-phone|" + a: "first", "second-phone|" + b: "second"]
+        vm.log("Card " + a + " on 00000000-0000000000000000")
+        precondition(!vm.logs.last!.contains(a))
+        precondition(!vm.logs.last!.contains("00000000-0000000000000000"))
         vm.clearAllCards()
+        precondition(vm.flashedSkins == ["second-phone|" + b: "second"])
+        precondition(vm.currentVerifiedCardIDs.isEmpty)
         vm.activateCardDevice("second-phone")
         precondition(vm.confirmedCardIDs == [b])
         vm.activateCardDevice("first-phone")

@@ -13,7 +13,8 @@ C = 'C' * 27 + '='
 
 def device(ids, model='iPhone16,1'):
     return {'modelIdentifier': model, 'remotePaymentInstruments': [
-        {'passID': i, 'displayName': 'Same bank', 'primaryAccountIdentifier': 'must-not-export',
+        {'passID': i, 'displayName': 'Same bank', 'primaryAccountIdentifier': 'must-not-export', 'accountNumber': 'synthetic-account-secret',
+         'authenticationToken': 'synthetic-auth-secret', 'cvv': 'synthetic-cvv-secret',
          'primaryPaymentApplication': {'applicationIdentifier': 'A0000000000000000' + str(n)}}
         for n, i in enumerate(ids)
     ]}
@@ -39,7 +40,10 @@ class WalletCatalogTests(unittest.TestCase):
         self.assertEqual([c['id'] for c in result['payments']], [A, B])
         self.assertEqual([c['name'] for c in result['payments']], ['Same bank', 'Same bank'])
         self.assertEqual(result['payments'][0]['activationID'], 'A00000000000000000')
-        self.assertNotIn('must-not-export', json.dumps(result))
+        for secret in ('must-not-export', 'synthetic-account-secret', 'synthetic-auth-secret', 'synthetic-cvv-secret'):
+            self.assertNotIn(secret, json.dumps(result))
+        for row in result['payments']:
+            self.assertLessEqual(set(row), {'id', 'name', 'source', 'activationID'})
 
     def test_unique_matching_model_can_bootstrap_activation_mapping(self):
         write_archive(self.root, [device([A])])

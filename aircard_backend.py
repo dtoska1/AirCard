@@ -74,6 +74,7 @@ def cmd_device(target_udid: str | None = None):
         try:
             probe = native("probe", device["udid"])
             device["airlift_compatible"] = operation_ok(probe)
+            device["airlift_tested"] = bool(probe.get("targetTested"))
         except Exception:
             device["airlift_compatible"] = False
     else:
@@ -97,6 +98,9 @@ def cmd_devices(target_udid: str | None = None):
             if d["udid"] == target_udid:
                 active_device = dict(d)
                 break
+    if target_udid and not active_device:
+        print(json.dumps({"connected": False, "error": "selected_device_missing", "devices": devices}))
+        return
     if not active_device:
         paired = [d for d in devices if d.get("product")]
         active_device = dict(paired[0] if paired else devices[0])
@@ -105,6 +109,7 @@ def cmd_devices(target_udid: str | None = None):
         try:
             probe = native("probe", active_device["udid"])
             active_device["airlift_compatible"] = operation_ok(probe)
+            active_device["airlift_tested"] = bool(probe.get("targetTested"))
         except Exception:
             active_device["airlift_compatible"] = False
     else:
@@ -386,6 +391,8 @@ def parse_passthm_archive(
                 "/var/mobile/Library/Caches/TelephonyUI-8",
             ]
         else:
+            if not re.fullmatch(r"TelephonyUI-[0-9]{1,3}", norm_ver):
+                raise ValueError("Invalid TelephonyUI cache directory")
             target_dirs = [f"/var/mobile/Library/Caches/{norm_ver}"]
 
         items_dict: dict[str, bytes] = {}
@@ -393,9 +400,15 @@ def parse_passthm_archive(
         # Normalize target_lang & target_bold
         target_lang = (target_lang or "all").lower().strip()
         target_bold = (target_bold or "both").lower().strip()
+        if not re.fullmatch(r"(?:all|other|[a-z]{2,3}(?:-[a-z0-9]{2,8})*)", target_lang):
+            raise ValueError("Invalid theme language")
+        if target_bold not in ("both", "bold", "regular"):
+            raise ValueError("Invalid theme font mode")
 
         for entry in image_entries:
             leaf = Path(entry).name
+            if "\\" in leaf or "\x00" in leaf:
+                raise ValueError("Invalid theme artwork filename")
             data = z.read(entry)
 
             stem = Path(leaf).stem

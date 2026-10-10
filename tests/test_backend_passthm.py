@@ -1,10 +1,21 @@
 import sys
+import tempfile
+import zipfile
+import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 # Add project root to sys.path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from aircard_backend import parse_passthm_archive, KEYPAD_SUBTEXTS
+
+_fixture_dir = tempfile.TemporaryDirectory(prefix="aircard-theme-tests-")
+_fixture_path = Path(_fixture_dir.name) / "synthetic.passthm"
+with zipfile.ZipFile(_fixture_path, "w") as archive:
+    for digit in range(10):
+        archive.writestr(f"keys/en-{digit}---white.png", b"synthetic-image")
+
 
 
 def verify_archive_extraction(passthm_path: str, name: str):
@@ -45,17 +56,17 @@ def verify_archive_extraction(passthm_path: str, name: str):
 
 
 def test_minepass_nightly():
-    minepass_path = "/Users/mak5er/Downloads/MinePass_Nightly.passthm"
-    verify_archive_extraction(minepass_path, "MinePass_Nightly.passthm")
+    minepass_path = str(_fixture_path)
+    verify_archive_extraction(minepass_path, "synthetic ten-key theme")
 
 
 def test_tck():
-    tck_path = "/Users/mak5er/Downloads/AyuGram Desktop/тцк.passthm"
-    verify_archive_extraction(tck_path, "тцк.passthm")
+    tck_path = str(_fixture_path)
+    verify_archive_extraction(tck_path, "synthetic ten-key theme (second invocation)")
 
 
 def test_filtered_modes():
-    minepass_path = "/Users/mak5er/Downloads/MinePass_Nightly.passthm"
+    minepass_path = str(_fixture_path)
     # Test uk + bold only
     items_uk_bold = parse_passthm_archive(minepass_path, "TelephonyUI-10", target_lang="uk", target_bold="bold")
     leaves_uk_bold = [item[1] for item in items_uk_bold]
@@ -72,7 +83,7 @@ def test_filtered_modes():
 
 
 def test_digit_5_and_universal():
-    minepass_path = "/Users/mak5er/Downloads/MinePass_Nightly.passthm"
+    minepass_path = str(_fixture_path)
     # Test digit 5 in ru + bold
     items_ru_bold = parse_passthm_archive(minepass_path, "TelephonyUI-9", target_lang="ru", target_bold="bold")
     leaves = [item[1] for item in items_ru_bold]
@@ -138,7 +149,7 @@ def test_cmd_flash_passthm_batch_fast():
     from unittest.mock import Mock, patch
     import aircard_backend
 
-    minepass_path = "/Users/mak5er/Downloads/MinePass_Nightly.passthm"
+    minepass_path = str(_fixture_path)
     mock_batch = Mock(return_value=True)
     mock_single = Mock(return_value=True)
 
@@ -146,6 +157,7 @@ def test_cmd_flash_passthm_batch_fast():
     with (
         patch.object(aircard_backend, "write_files_batch", mock_batch),
         patch.object(aircard_backend, "write_file", mock_single),
+        patch.object(aircard_backend.time, "sleep"),
         redirect_stdout(buf),
     ):
         ok = aircard_backend.cmd_flash_passthm(
@@ -183,7 +195,7 @@ def test_cmd_flash_passthm_fallback():
     from unittest.mock import Mock, patch
     import aircard_backend
 
-    minepass_path = "/Users/mak5er/Downloads/MinePass_Nightly.passthm"
+    minepass_path = str(_fixture_path)
     mock_batch = Mock(return_value=False)  # Batch fails!
     mock_single = Mock(return_value=True)  # Fallback succeeds
 
@@ -191,6 +203,7 @@ def test_cmd_flash_passthm_fallback():
     with (
         patch.object(aircard_backend, "write_files_batch", mock_batch),
         patch.object(aircard_backend, "write_file", mock_single),
+        patch.object(aircard_backend.time, "sleep"),
         redirect_stdout(buf),
     ):
         ok = aircard_backend.cmd_flash_passthm(
@@ -209,6 +222,20 @@ def test_cmd_flash_passthm_fallback():
     assert any(line.get("type") == "warning" and "Batch write notice" in line.get("message", "") for line in output_lines)
     assert any(line.get("type") == "success" for line in output_lines)
     print(f"✓ cmd_flash_passthm fallback verified ({mock_single.call_count} individual writes after batch failure)")
+
+
+def test_rejects_theme_path_parameters():
+    for args in [dict(telephony_ver="../../Passes/Cards"), dict(target_lang="../../escape"), dict(target_bold="bad")]:
+        try:
+            parse_passthm_archive(str(_fixture_path), **args)
+        except ValueError:
+            continue
+        raise AssertionError("Unsafe theme parameter accepted")
+
+
+def load_tests(loader, tests, pattern):
+    return unittest.TestSuite(unittest.FunctionTestCase(value) for name, value in globals().items()
+                              if name.startswith("test_") and callable(value))
 
 
 if __name__ == "__main__":

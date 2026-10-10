@@ -12,6 +12,8 @@ struct WalletDiscoveryTests {
         for id in ["../" + a, a + "/b", a + "\\b", a + "..", a + "\n", "short", String(repeating: "x", count: 65)] {
             precondition(!WalletScanParser.isValidCardID(id))
         }
+        precondition(!WalletDiagnostics.redacted("Card " + a).contains(a))
+        precondition(!WalletDiagnostics.redacted("Device 00000000-0000000000000000").contains("00000000-0000000000000000"))
         let line = "Wallet /Cards/\(b).cache/Preview /Cards/\(a).pkpass/en.lproj /Cards/\(b).pkcache/FrontFace"
         precondition(WalletScanParser.cardIDs(in: line) == [b, a])
         precondition(WalletScanParser.cardIDs(in: "passd identifier \(a)").isEmpty)

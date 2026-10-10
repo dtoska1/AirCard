@@ -10,12 +10,12 @@ struct WalletDiagnosticsView: View {
 
     private var headerStatusText: String {
         let matched = vm.currentVerifiedCardIDs.count
-        let hidden = max(0, vm.cards.count - matched)
+        let unverified = max(0, vm.cards.count - matched)
         if vm.isScanningCards {
             return "Scanning iPhone Wallet…"
         }
         if matched > 0 {
-            return hidden > 0 ? "\(matched) card(s) verified · \(hidden) hidden" : "\(matched) card(s) verified"
+            return unverified > 0 ? "\(matched) matched · \(unverified) without live verification" : "\(matched) card(s) matched"
         }
         return "No cards detected. Tap 'Scan Cards' to begin."
     }
