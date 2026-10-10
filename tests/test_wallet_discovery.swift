@@ -46,6 +46,39 @@ struct WalletDiscoveryTests {
         precondition(WalletScanParser.selectionEvidence(in: "passd updated selected pass uniqueID: UNKNOWN") == ["unrecognized"])
         precondition(WalletScanParser.selectionEvidence(in: "passd something unrelated").isEmpty)
 
+        // Opt-in read-only A / Express B / A correlation.
+        // Neither global lists nor Dashboard preloads prove selection.
+        var correlation = WalletABACorrelation()
+        precondition(!correlation.isRunning)
+        correlation.begin()
+        precondition(correlation.step == .firstTarget && correlation.isCapturing)
+        correlation.observe(line: dashboardLine1, structuredIDs: [a])
+        correlation.observe(line: "Wallet /Cards/\(c).cache", structuredIDs: [c])
+        correlation.advance()
+        precondition(correlation.step == .switchToExpress && !correlation.isCapturing)
+        correlation.observe(line: dashboardLine1, structuredIDs: [a]) // excluded while switching
+        correlation.advance()
+        precondition(correlation.step == .express)
+        correlation.observe(line: "nfcd passIDs[global]: {(\\\"\(b)\\\")}", structuredIDs: [b])
+        correlation.observe(line: "Wallet /Cards/\(c).cache", structuredIDs: [c])
+        correlation.advance()
+        correlation.observe(line: dashboardLine1, structuredIDs: [a]) // paused, excluded
+        correlation.advance()
+        precondition(correlation.step == .secondTarget)
+        correlation.observe(line: dashboardLine1, structuredIDs: [a])
+        correlation.observe(line: "Wallet /Cards/\(c).cache", structuredIDs: [c])
+        correlation.advance()
+        precondition(correlation.step == .finished && !correlation.isRunning)
+        precondition(correlation.phaseIDs[0] == Set([a, c]))
+        precondition(correlation.phaseIDs[1] == Set([b, c]))
+        precondition(correlation.phaseIDs[2] == Set([a, c]))
+        precondition(correlation.repeatedInTarget == Set([a, c]))
+        precondition(correlation.targetOnlyCoincidences == Set([a]))
+        precondition(correlation.expressGlobalEvents == 1)
+        precondition(!correlation.summary.contains(a)) // never show full identifiers
+        correlation.cancel()
+        precondition(correlation.step == .idle && correlation.phaseIDs.allSatisfy(\.isEmpty))
+
         let activation = "A00000000310100100000020"
         let activeLine = "setActivePaymentApplet: x requestedApplet: <NFApplet> { identifier=\(activation) family=0x0 }"
         precondition(WalletScanParser.activationIDs(in: activeLine) == [activation])
