@@ -172,11 +172,26 @@ The **Recovery Check** button runs `artwork_recovery_probe.py` locally and
 checks only existing `~/Library/Passes/Cards/*.pkpass` folders on the Mac for
 `cardBackgroundCombined*.urls` reference files. It shows **counts only**:
 folders examined, reference files present and files containing a plausible
-HTTP(S) artwork URL. It does not reveal URLs, card identifiers, authentication
-tokens or the file contents. There are no network requests, iPhone reads,
-AirLift operations, artwork writes or cache removals.
+HTTP(S) artwork URL. It also reports `empty`, `unavailable`, `inaccessible`
+or `partial` when results cannot be considered complete. The scanner uses
+bounded, descriptor-relative reads and does not parse untrusted plist
+structures. It does not reveal URLs, card identifiers, authentication
+tokens or file contents. The check itself performs no network requests, iPhone
+reads, AirLift operations, artwork writes or cache removals.
 
-**A zero result does not imply the iPhone has no original artwork references.**
+**For a device-free run**, unplug the iPhone and execute the script independently
+from Terminal instead of launching the GUI (which may automatically probe a
+connected device on startup):
+
+```bash
+cd ~/Desktop/AirCard
+python3 artwork_recovery_probe.py
+```
+
+The script returns counts and scan status only. Never send original URLs or
+payment-card identifiers to a reviewer. This diagnostic neither retrieves
+artwork nor provides rollback. **A zero result does not imply the iPhone has
+no original artwork references.**
 Some Macs (including Macs without a Wallet payment cache) have no local payment
 pass folders, even if the iPhone's Wallet cards are present and working.
 
