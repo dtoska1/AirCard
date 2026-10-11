@@ -33,10 +33,13 @@ URL_MARKERS = (
 
 def _open_directory(parent_fd: int, leaf: str) -> int:
     fd = os.open(leaf, DIR_FLAGS, dir_fd=parent_fd)
-    if not stat.S_ISDIR(os.fstat(fd).st_mode):
+    try:
+        if not stat.S_ISDIR(os.fstat(fd).st_mode):
+            raise OSError("Not a directory")
+        return fd
+    except BaseException:
         os.close(fd)
-        raise OSError("Not a directory")
-    return fd
+        raise
 
 
 def inspect_reference(parent_fd: int, leaf: str) -> tuple[bool, bool]:
@@ -111,6 +114,11 @@ def probe_local_cache(root: Path) -> dict:
                                         report["limited"] = True
                                         break
                                     if REFERENCE_NAME.fullmatch(leaf.name) is None:
+                                        continue
+                                    # Skip obvious symlinks; O_NOFOLLOW also prevents
+                                    # following one swapped into place after this check.
+                                    if leaf.is_symlink():
+                                        report["errors"] += 1
                                         continue
                                     report["referenceFiles"] += 1
                                     try:
